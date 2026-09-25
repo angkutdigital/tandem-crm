@@ -88,10 +88,17 @@ The Supabase implementation lives outside the package at `src/lib/supabase/tande
 
 `TandemAdminAdapter.createMembership(workspaceId, userId, role, agentId)` creates the membership row linking an already-existing auth user to a workspace. It does **not** create the auth user itself: the caller must first create the user via the host auth provider (e.g. Supabase Auth's `inviteUserByEmail`) and pass the resulting `userId` in. The Supabase implementation runs with the calling user's own session, so it only succeeds if that user is already an owner/admin per the RLS policy on `tandem.members`.
 
+## Ramp: agent onboarding and certification
+
+Ramp tracks whether a sales agent/partner has completed a workspace-defined checklist of onboarding steps and is certified. Scope is deliberately narrow: no content authoring, no LMS, no quizzes, just step tracking and a certification state. Tandem never enforces what certification gates (a territory assignment, a commission rule, anything else); that decision belongs to the implementing application, the same way Core tracks business state without enforcing business policy.
+
+Onboarding events live in their own append-only log, `tandem.agent_events`, rather than `tandem.events`: events there require a `lead_id`, and onboarding events are scoped to an agent, not a lead. `replayAgentOnboardingEvents()` rebuilds one agent's state the same way `replayLeadEvents()` does; `isAgentCertified(state, requiredStepCodes)` checks both `certifiedAt` and that every currently-required step is actually in the completed list, so the answer stays correct even if a workspace adds a new required step after an agent was certified under the old list.
+
 ## Open items
 
-- No integration tests against a real database yet.
+- No integration tests against a real database yet (the RLS/portability work in this repo's history was verified by hand against a real disposable Postgres instance, not via an automated CI job; that's still a gap).
 - No support for partial refunds, multiple payments per lead, or post-payout clawbacks yet: single full payment / single full refund only.
+- No automatic lead-routing (round-robin, least-loaded) yet; a lead's `assignee_id` is set directly by whatever the caller passes to `lead.assigned`.
 
 ## Local verification
 
