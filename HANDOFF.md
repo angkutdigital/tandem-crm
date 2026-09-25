@@ -3,6 +3,16 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+**Update (this session):** Agent detail page, Leads (list + kanban +
+detail), and the `vehicleCount` → `qualificationMetric` genericization
+below are all now DONE (see "Where things stand" and the gotchas list,
+both updated in place). This PR was merged to `main`. Remaining open
+item is Coaster's dispute-execution/clawback layer — see "What Coaster
+does not do yet" below, unchanged from last session. DeepSeek was not
+used this round: the `DEEPSEEK_API_KEY` in utuh-web's `.env.local` is
+being rejected directly by DeepSeek's `/v1/models` endpoint
+("Authentication Fails... invalid") — needs rotation before next use.
+
 ## What this project is
 
 Two repos, one product:
@@ -31,13 +41,14 @@ blocked while a dispute is open) are all shipped, tested, and
 live-verified against real Postgres.
 
 **Dashboard** (`examples/dashboard`, Next.js + shadcn/ui, built on Base UI
-not Radix): Overview, Ramp onboarding, **Payouts**, and **Routing
-settings** pages all work end to end against a real Postgres database,
-each verified in an actual browser render (not just typecheck). Still
-missing: **Leads** (list + kanban + lead detail) and an **Agent detail**
-page beyond what Overview already shows. `lib/queries.ts` and
-`lib/actions.ts` already have most of the data functions these would
-need — check there before writing new queries.
+not Radix): Overview, Ramp onboarding, Payouts, Routing settings,
+**Agent detail**, and **Leads** (list + kanban + lead detail) pages all
+exist now and build/typecheck/lint clean, reading entirely through the
+existing `lib/queries.ts` functions (no new queries needed). **Not
+browser-verified** — no scripted local dev Postgres exists yet (see the
+gotcha below), so these three pages are typecheck/build-clean but
+unseen in an actual render. Verify in a real browser before trusting
+them blindly.
 
 **Packaging:** `SECURITY.md` and `CONTRIBUTING.md` added, stating the
 real RLS/security model including the known gap below. `CHANGELOG.md`
@@ -101,18 +112,27 @@ full vitest + Playwright run, final copy pass.
   session were both DeepSeek drafts, typechecked clean and live-verified
   with no edits needed) — the risk is specifically in "extend this exact
   existing function" tasks.
-- **tandem-crm's `domain.ts` hardcodes `vehicleCount`** as the
-  lead-qualification field (a threshold decides automated setup vs.
-  manual review). This is a leftover from the original fleet/logistics
-  use case this package was extracted from — it isn't a generic
-  "qualification metric" field, so it will read strangely to anyone
-  adopting this outside logistics. Not fixed this session; flagged here
-  since it came up as a real point of confusion.
+- **`vehicleCount` was renamed to `qualificationMetric`** (domain.ts,
+  tandem.config.ts, dashboard queries, seed/CI scripts) via migration 012
+  (`alter table tandem.leads rename column vehicle_count to
+  qualification_metric`), since 001 was already applied wherever this
+  schema is installed. If you're updating an existing installation
+  (including Utuh's own database, which is a separate copy of this
+  schema, not something this repo can migrate for you), you need to run
+  012 there too — this repo's migration set does not reach into Utuh's
+  live Supabase project. **Gotcha discovered fixing this:** a plain
+  `grep` for `vehicleCount`/`vehicle_count` scoped to `.ts`/`.tsx`/`.sql`
+  missed two real references in `.mjs` files
+  (`scripts/ci-rls-check.mjs`, `examples/dashboard/scripts/seed.mjs`) —
+  CI's `rls` job caught it (`column "vehicle_count" of relation "leads"
+  does not exist`) on the first push. When renaming an identifier that
+  also exists as a DB column name, grep without a file-extension filter.
 
 ## Suggested next step
 
-Ask the user before starting anything new. If/when resumed, the
-cheapest-to-riskiest remaining items are roughly: Agent detail page →
-Leads (list + kanban + detail) → genericizing `vehicleCount` → Coaster's
+Agent detail, Leads, and the `vehicleCount` rename are done (see
+above). The only item left from the original priority list is Coaster's
 dispute-execution/clawback layer (security-sensitive, do not hand
-straight to DeepSeek — see the note above).
+straight to DeepSeek — see the note above). Browser-verify the three new
+dashboard pages first, since they've only been typecheck/build-verified
+so far. Rotate the DeepSeek API key before dispatching to it again.
