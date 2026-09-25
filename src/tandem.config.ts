@@ -4,7 +4,7 @@
  */
 export type TandemConfig = {
   qualification: {
-    automatedSetupMaxVehicleCount: number;
+    automatedSetupMaxQualificationMetric: number;
   };
   commission: {
     holdDays: number;
@@ -13,7 +13,7 @@ export type TandemConfig = {
 
 export const defaultTandemConfig: TandemConfig = {
   qualification: {
-    automatedSetupMaxVehicleCount: 15,
+    automatedSetupMaxQualificationMetric: 15,
   },
   commission: {
     holdDays: 30,
@@ -21,12 +21,12 @@ export const defaultTandemConfig: TandemConfig = {
 };
 
 export function defineTandemConfig(config: TandemConfig): TandemConfig {
-  if (!Number.isSafeInteger(config.qualification.automatedSetupMaxVehicleCount)) {
-    throw new Error("automatedSetupMaxVehicleCount must be a safe integer");
+  if (!Number.isSafeInteger(config.qualification.automatedSetupMaxQualificationMetric)) {
+    throw new Error("automatedSetupMaxQualificationMetric must be a safe integer");
   }
 
-  if (config.qualification.automatedSetupMaxVehicleCount < 0) {
-    throw new Error("automatedSetupMaxVehicleCount cannot be negative");
+  if (config.qualification.automatedSetupMaxQualificationMetric < 0) {
+    throw new Error("automatedSetupMaxQualificationMetric cannot be negative");
   }
 
   if (!Number.isSafeInteger(config.commission.holdDays) || config.commission.holdDays < 0) {

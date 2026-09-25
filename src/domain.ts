@@ -10,7 +10,7 @@ export type QualificationStatus = Extract<TandemLeadStatus, "Automated_Setup" | 
 export type InboundLead = {
   companyName: string;
   contactPhone: string;
-  vehicleCount: number;
+  qualificationMetric: number;
   partnerId?: string;
   productTag: string;
   attributes?: Record<string, unknown>;
@@ -21,11 +21,11 @@ export type LeadQualification = {
   shouldStartCheckout: boolean;
 };
 
-export function qualifyLead(lead: Pick<InboundLead, "vehicleCount">, config: TandemConfig): LeadQualification {
-  if (!Number.isSafeInteger(lead.vehicleCount) || lead.vehicleCount < 0) {
-    throw new Error("vehicleCount must be a non-negative safe integer");
+export function qualifyLead(lead: Pick<InboundLead, "qualificationMetric">, config: TandemConfig): LeadQualification {
+  if (!Number.isSafeInteger(lead.qualificationMetric) || lead.qualificationMetric < 0) {
+    throw new Error("qualificationMetric must be a non-negative safe integer");
   }
-  const isAutomated = lead.vehicleCount <= config.qualification.automatedSetupMaxVehicleCount;
+  const isAutomated = lead.qualificationMetric <= config.qualification.automatedSetupMaxQualificationMetric;
   return {
     status: isAutomated ? "Automated_Setup" : "Manual_Review",
     requiresHumanReview: !isAutomated,
@@ -87,7 +87,7 @@ type EventBase = {
 };
 
 export type TandemEvent = EventBase & (
-  | { type: "lead.created"; data: { companyName: string; vehicleCount: number; qualification: QualificationStatus; partnerId?: string } }
+  | { type: "lead.created"; data: { companyName: string; qualificationMetric: number; qualification: QualificationStatus; partnerId?: string } }
   | { type: "lead.assigned"; data: { agentId: string; territoryId: string | null } }
   | { type: "lead.lost"; data: { reason: string } }
   | { type: "conversion.confirmed"; data: Record<string, never> }
@@ -113,7 +113,7 @@ export type LeadState = {
   leadId: string;
   status: TandemLeadStatus;
   companyName: string;
-  vehicleCount: number;
+  qualificationMetric: number;
   partnerId: string | null;
   agentId: string | null;
   territoryId: string | null;
@@ -162,9 +162,9 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
     switch (event.type) {
       case "lead.created":
         requireTransition(state === null, event.type);
-        if (!event.data.companyName.trim() || !Number.isSafeInteger(event.data.vehicleCount) || event.data.vehicleCount < 0) throw new Error("invalid lead creation data");
+        if (!event.data.companyName.trim() || !Number.isSafeInteger(event.data.qualificationMetric) || event.data.qualificationMetric < 0) throw new Error("invalid lead creation data");
         if (event.data.qualification !== "Automated_Setup" && event.data.qualification !== "Manual_Review") throw new Error("invalid qualification");
-        state = { workspaceId, leadId, status: event.data.qualification, companyName: event.data.companyName, vehicleCount: event.data.vehicleCount, partnerId: event.data.partnerId ?? null, agentId: null, territoryId: null, payment: null, commission: null, lastSequence };
+        state = { workspaceId, leadId, status: event.data.qualification, companyName: event.data.companyName, qualificationMetric: event.data.qualificationMetric, partnerId: event.data.partnerId ?? null, agentId: null, territoryId: null, payment: null, commission: null, lastSequence };
         break;
       case "lead.assigned":
         requireTransition(state !== null && state.status !== "Lost" && state.status !== "Refunded", event.type);

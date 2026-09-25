@@ -168,7 +168,7 @@ export async function getAgentDetail(userId: string, agentId: string): Promise<A
 export type LeadSummary = {
   id: string;
   companyName: string;
-  vehicleCount: number;
+  qualificationMetric: number;
   pipelineStatus: string;
   assigneeId: string | null;
   assigneeName: string | null;
@@ -178,10 +178,10 @@ export type LeadSummary = {
 export async function getLeads(userId: string): Promise<LeadSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
-      id: string; company_name: string; vehicle_count: number; pipeline_status: string;
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string;
       assignee_id: string | null; assignee_name: string | null; updated_at: string;
     }>(
-      `select l.id, l.company_name, l.vehicle_count, l.pipeline_status, l.assignee_id,
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
               a.display_name as assignee_name, l.updated_at
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id
@@ -189,7 +189,7 @@ export async function getLeads(userId: string): Promise<LeadSummary[]> {
     )
   );
   return result.rows.map((row) => ({
-    id: row.id, companyName: row.company_name, vehicleCount: row.vehicle_count,
+    id: row.id, companyName: row.company_name, qualificationMetric: row.qualification_metric,
     pipelineStatus: row.pipeline_status, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
     updatedAt: toISO(row.updated_at),
   }));
@@ -202,10 +202,10 @@ export type LeadDetail = LeadSummary & {
 export async function getLeadDetail(userId: string, leadId: string): Promise<LeadDetail | null> {
   return withTandemSession(pool, userId, async (client) => {
     const leadResult = await client.query<{
-      id: string; company_name: string; vehicle_count: number; pipeline_status: string;
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string;
       assignee_id: string | null; assignee_name: string | null; updated_at: string;
     }>(
-      `select l.id, l.company_name, l.vehicle_count, l.pipeline_status, l.assignee_id,
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
               a.display_name as assignee_name, l.updated_at
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id
@@ -221,7 +221,7 @@ export async function getLeadDetail(userId: string, leadId: string): Promise<Lea
     );
 
     return {
-      id: lead.id, companyName: lead.company_name, vehicleCount: lead.vehicle_count,
+      id: lead.id, companyName: lead.company_name, qualificationMetric: lead.qualification_metric,
       pipelineStatus: lead.pipeline_status, assigneeId: lead.assignee_id, assigneeName: lead.assignee_name,
       updatedAt: toISO(lead.updated_at),
       events: eventsResult.rows.map((r) => ({ id: r.id, type: r.event_type, payload: r.payload, occurredAt: toISO(r.occurred_at) })),
