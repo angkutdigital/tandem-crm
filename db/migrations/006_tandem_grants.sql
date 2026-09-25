@@ -1,7 +1,7 @@
 -- Tandem P1 follow-up: grant schema/table privileges to `authenticated`.
 --
 -- 005 added RLS policies but Postgres checks base GRANTs before it ever
--- consults a row policy — schema tandem was created with
+-- consults a row policy: schema tandem was created with
 -- `revoke all ... from public` (001_tandem_core.sql), so `authenticated`
 -- had no USAGE on the schema at all and every policy in 005 was
 -- unreachable ("permission denied for schema tandem"). Caught live: a
@@ -22,7 +22,7 @@ grant select, insert, update, delete on tandem.commission_rules to authenticated
 
 -- leads/events/payouts/payout_ledger have no write policy in 005 (all
 -- written by the service-role projection writer), so only SELECT is
--- granted here — an insert/update/delete attempt from `authenticated`
+-- granted here; an insert/update/delete attempt from `authenticated`
 -- should fail at this same grant check, not rely on RLS to block it.
 grant select on tandem.leads to authenticated;
 grant select on tandem.events to authenticated;

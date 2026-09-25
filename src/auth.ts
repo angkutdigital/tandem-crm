@@ -5,7 +5,7 @@ export type TandemMember = TandemMemberRow; // keep existing shape/name for call
 /**
  * The signed-in user's Tandem membership in a specific workspace, or null
  * if not signed in or not a member of that workspace. Tandem has no
- * concept yet of "the current workspace" resolved from session/subdomain —
+ * concept yet of "the current workspace" resolved from session/subdomain,
  * callers pass workspaceId explicitly (from the route).
  */
 export async function getCurrentTandemMember(
@@ -32,10 +32,10 @@ export async function isCurrentUserTandemAdmin(
 
 /**
  * The signed-in user's own membership row, without knowing the workspace
- * in advance — used right after login to find where to send them. A user
+ * in advance, used right after login to find where to send them. A user
  * is expected to belong to exactly one workspace in this MVP; if they
  * somehow belong to more than one, return the first one found (order is
- * whatever the DB returns — good enough for now, this is a single-
+ * whatever the DB returns, good enough for now, this is a single-
  * workspace-per-user product today). A real "pick a workspace" UI would
  * be needed if that assumption ever breaks.
  */

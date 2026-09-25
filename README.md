@@ -1,8 +1,8 @@
 # Tandem CRM
 
-An embeddable, event-sourced partner-attribution and commission-payout engine for Postgres. Install it directly into your own Next.js (or any Node) app — no separate service to run, no vendor lock-in.
+An embeddable, event-sourced partner-attribution and commission-payout engine for Postgres. Install it directly into your own Next.js (or any Node) app. No separate service to run, no vendor lock-in.
 
-**Status:** in production use today, powering a real partner login and commission-tracking flow for [Utuh](https://utuh.com.my), the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below) — the Supabase Auth adapter is proven in production; a generic/BetterAuth adapter for Neon and other plain-Postgres hosts is on the roadmap.
+**Status:** in production use today, powering a real partner login and commission-tracking flow for [Utuh](https://utuh.com.my), the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; a generic/BetterAuth adapter for Neon and other plain-Postgres hosts is on the roadmap.
 
 ## What the package does
 
@@ -64,7 +64,7 @@ The `tandem` schema is applied to production and exposed to PostgREST. Row-level
 
 The migration set does **not** create Auth identities, webhook secrets, or a cron schedule. Those belong in a separately reviewed migration after the correct Supabase project and client credentials are verified. Limit retention/access for `raw_payload` because it can contain personal data. Do not expose the private schema to client code beyond the intended PostgREST surface.
 
-**Host portability:** `005`/`006` were written against Supabase-only assumptions (`auth.users`, `auth.uid()`, the `authenticated` role) that silently broke every non-Supabase host. `007_tandem_portable_auth.sql` fixes all three: identity now resolves through `tandem.current_user_id()`, which reads a `tandem.user_id` session setting (see `src/db/client.ts`'s `withTandemSession`) and falls back to `auth.uid()` only where Supabase provides it. Verified by actually running the full migration set against a fresh, non-Supabase Postgres 16 instance and confirming cross-tenant row-level isolation holds for real seeded data (two workspaces, two users, explicit cross-tenant reads returning zero rows) — not just a read of the policy SQL.
+**Host portability:** `005`/`006` were written against Supabase-only assumptions (`auth.users`, `auth.uid()`, the `authenticated` role) that silently broke every non-Supabase host. `007_tandem_portable_auth.sql` fixes all three: identity now resolves through `tandem.current_user_id()`, which reads a `tandem.user_id` session setting (see `src/db/client.ts`'s `withTandemSession`) and falls back to `auth.uid()` only where Supabase provides it. Verified by actually running the full migration set against a fresh, non-Supabase Postgres 16 instance and confirming cross-tenant row-level isolation holds for real seeded data (two workspaces, two users, explicit cross-tenant reads returning zero rows), not just a read of the policy SQL.
 
 ## Adapter pattern (vendor-neutral auth)
 
@@ -78,11 +78,11 @@ export type TandemAuthAdapter = {
 };
 ```
 
-The Supabase implementation lives outside the package at `src/lib/supabase/tandemSupabaseAdapter.ts` and is passed in by callers (e.g. `getCurrentTandemMember(tandemSupabaseAdapter, workspaceId)`). To plug in a non-Supabase backend, implement `TandemAuthAdapter` against that backend and pass it to the same functions — no changes to the package are required.
+The Supabase implementation lives outside the package at `src/lib/supabase/tandemSupabaseAdapter.ts` and is passed in by callers (e.g. `getCurrentTandemMember(tandemSupabaseAdapter, workspaceId)`). To plug in a non-Supabase backend, implement `TandemAuthAdapter` against that backend and pass it to the same functions. No changes to the package are required.
 
 ## Setup verification (`doctor.ts`)
 
-`runTandemDoctor(supabaseUrl, supabaseKey)` makes plain `fetch` calls (no SDK) against a live project and reports whether the `tandem` schema is exposed to PostgREST and whether a public key is correctly denied direct access. It is meant to be run standalone against an installation from the outside. It is not yet wired into a CLI or `package.json` script — that is a follow-up.
+`runTandemDoctor(supabaseUrl, supabaseKey)` makes plain `fetch` calls (no SDK) against a live project and reports whether the `tandem` schema is exposed to PostgREST and whether a public key is correctly denied direct access. It is meant to be run standalone against an installation from the outside. It is not yet wired into a CLI or `package.json` script; that is a follow-up.
 
 ## Agent provisioning
 
@@ -91,16 +91,17 @@ The Supabase implementation lives outside the package at `src/lib/supabase/tande
 ## Open items
 
 - No integration tests against a real database yet.
-- No support for partial refunds, multiple payments per lead, or post-payout clawbacks yet — single full payment / single full refund only.
+- No support for partial refunds, multiple payments per lead, or post-payout clawbacks yet: single full payment / single full refund only.
 
 ## Local verification
 
 From the repository root:
 
 ```sh
-npm run test -- --run src/packages/tandem-crm/domain.test.ts
-npm run test
-npx tsc --noEmit --incremental false --pretty false
+npm install
+npm run typecheck
+npm test
+npm run build
 ```
 
-The last command currently has a separate Academy `astro:content` module-resolution error in this repository; it is not a Tandem error. No database credentials or network access are needed for these tests.
+No database credentials or network access are needed for these tests. CI runs the same steps on every push and pull request.

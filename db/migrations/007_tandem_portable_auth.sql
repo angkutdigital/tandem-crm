@@ -161,8 +161,8 @@ grant execute on function tandem.current_agent_id(uuid) to authenticated;
 
 -- Section 4: re-establish every RLS policy from 005, idempotently. Each
 -- policy is preceded by `drop policy if exists` so it is safe whether 005
--- originally succeeded (Supabase -- drop then recreate identically) or
--- failed (fresh host -- the drop is a no-op, the create succeeds). Policy
+-- originally succeeded (Supabase: drop then recreate identically) or
+-- failed (fresh host: the drop is a no-op, the create succeeds). Policy
 -- logic is reproduced verbatim from 005; only the drops are added.
 
 -- tandem.members itself: a user always sees their own membership row(s);
@@ -271,11 +271,11 @@ create policy tandem_commission_rules_admin_delete on tandem.commission_rules
 
 -- leads: an agent sees ONLY leads assigned to them; an owner/admin sees
 -- every lead in the workspace. This is the actual "scoped lead view"
--- P2 needs — enforced here at the database layer, not just in app code.
+-- P2 needs: enforced here at the database layer, not just in app code.
 -- No insert/update/delete policy for any authenticated role: leads are a
 -- rebuildable projection, written only by the transactional event/
 -- projection writer (P1's other open item), which runs under the
--- service role — never a direct authenticated write.
+-- service role, never a direct authenticated write.
 alter table tandem.leads enable row level security;
 drop policy if exists tandem_leads_select on tandem.leads;
 create policy tandem_leads_select on tandem.leads
@@ -287,9 +287,9 @@ create policy tandem_leads_select on tandem.leads
 
 -- events: append-only audit log. An owner/admin can read every event in
 -- their workspace; an agent can read events for leads they can see (same
--- assignee check as above, via a lookup against tandem.leads — a plain
+-- assignee check as above, via a lookup against tandem.leads: a plain
 -- subquery is fine here, this isn't self-referential). No client insert/
--- update/delete policy at all — the immutability trigger already blocks
+-- update/delete policy at all; the immutability trigger already blocks
 -- update/delete outright, and inserts only ever come from the service
 -- role's own transactional writer.
 alter table tandem.events enable row level security;
@@ -305,9 +305,9 @@ create policy tandem_events_select on tandem.events
     )
   );
 
--- payouts / payout_ledger: same shape as leads — an agent sees only their
+-- payouts / payout_ledger: same shape as leads, an agent sees only their
 -- own payouts (matched via the lead they're assigned), an owner/admin
--- sees everything. No client write policy — payouts are written by
+-- sees everything. No client write policy; payouts are written by
 -- release_due_commissions() and the (not yet built) commission-approval
 -- action, both service-role operations.
 alter table tandem.payouts enable row level security;
@@ -356,7 +356,7 @@ grant select, insert, update, delete on tandem.commission_rules to authenticated
 
 -- leads/events/payouts/payout_ledger have no write policy in 005 (all
 -- written by the service-role projection writer), so only SELECT is
--- granted here — an insert/update/delete attempt from `authenticated`
+-- granted here; an insert/update/delete attempt from `authenticated`
 -- should fail at this same grant check, not rely on RLS to block it.
 grant select on tandem.leads to authenticated;
 grant select on tandem.events to authenticated;
