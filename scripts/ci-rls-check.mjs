@@ -58,7 +58,7 @@ async function main() {
       [workspaceA, userA, workspaceB, userB]
     );
     await pool.query(
-      `insert into tandem.leads (id, workspace_id, company_name, vehicle_count, pipeline_status, assignee_id)
+      `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
        values ($1, $2, 'CI Lead A', 1, 'Won', $3), ($4, $5, 'CI Lead B', 1, 'Won', $6)`,
       [leadA, workspaceA, agentA, leadB, workspaceB, agentB]
     );

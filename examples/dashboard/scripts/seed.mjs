@@ -66,7 +66,7 @@ function onboardingEvent(agentId, type, data, occurredAt) {
 /** Inserts a lead's full event history, replays it locally to build the
  * projection row (so the projection can never drift from what the events
  * actually say), then writes both. */
-async function insertLead(client, { id, companyName, vehicleCount, assigneeId, territoryId, events }) {
+async function insertLead(client, { id, companyName, qualificationMetric, assigneeId, territoryId, events }) {
   let sequence = 1;
   for (const e of events) {
     await client.query(
@@ -80,9 +80,9 @@ async function insertLead(client, { id, companyName, vehicleCount, assigneeId, t
   const state = replayLeadEvents(events, WORKSPACE_ID, id);
   await client.query(
     `insert into tandem.leads
-       (id, workspace_id, company_name, vehicle_count, pipeline_status, assignee_id, territory_id, last_event_sequence)
+       (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id, territory_id, last_event_sequence)
      values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, WORKSPACE_ID, companyName, vehicleCount, state.status, assigneeId, territoryId, state.lastSequence]
+    [id, WORKSPACE_ID, companyName, qualificationMetric, state.status, assigneeId, territoryId, state.lastSequence]
   );
   if (state.commission) {
     await client.query(
@@ -219,29 +219,29 @@ async function main() {
 
     const leadBorneo = randomUUID();
     await insertLead(client, {
-      id: leadBorneo, companyName: "Borneo Freight Co", vehicleCount: 8,
+      id: leadBorneo, companyName: "Borneo Freight Co", qualificationMetric: 8,
       assigneeId: ids.agentAmira, territoryId: ids.territoryNorth,
       events: [
-        leadEvent(leadBorneo, "lead.created", { companyName: "Borneo Freight Co", vehicleCount: 8, qualification: "Automated_Setup" }, daysAgo(3)),
+        leadEvent(leadBorneo, "lead.created", { companyName: "Borneo Freight Co", qualificationMetric: 8, qualification: "Automated_Setup" }, daysAgo(3)),
       ],
     });
 
     const leadKenari = randomUUID();
     await insertLead(client, {
-      id: leadKenari, companyName: "Kenari Logistics", vehicleCount: 22,
+      id: leadKenari, companyName: "Kenari Logistics", qualificationMetric: 22,
       assigneeId: ids.agentFarid, territoryId: ids.territorySouth,
       events: [
-        leadEvent(leadKenari, "lead.created", { companyName: "Kenari Logistics", vehicleCount: 22, qualification: "Manual_Review" }, daysAgo(5)),
+        leadEvent(leadKenari, "lead.created", { companyName: "Kenari Logistics", qualificationMetric: 22, qualification: "Manual_Review" }, daysAgo(5)),
         leadEvent(leadKenari, "lead.assigned", { agentId: ids.agentFarid, territoryId: ids.territorySouth }, daysAgo(4)),
       ],
     });
 
     const leadPerak = randomUUID();
     await insertLead(client, {
-      id: leadPerak, companyName: "Perak Transit", vehicleCount: 5,
+      id: leadPerak, companyName: "Perak Transit", qualificationMetric: 5,
       assigneeId: ids.agentSiti, territoryId: ids.territorySouth,
       events: [
-        leadEvent(leadPerak, "lead.created", { companyName: "Perak Transit", vehicleCount: 5, qualification: "Automated_Setup" }, daysAgo(8)),
+        leadEvent(leadPerak, "lead.created", { companyName: "Perak Transit", qualificationMetric: 5, qualification: "Automated_Setup" }, daysAgo(8)),
         leadEvent(leadPerak, "lead.assigned", { agentId: ids.agentSiti, territoryId: ids.territorySouth }, daysAgo(7)),
         leadEvent(leadPerak, "conversion.confirmed", {}, daysAgo(6)),
       ],
@@ -249,10 +249,10 @@ async function main() {
 
     const leadRimba = randomUUID();
     await insertLead(client, {
-      id: leadRimba, companyName: "Rimba Haulage", vehicleCount: 14,
+      id: leadRimba, companyName: "Rimba Haulage", qualificationMetric: 14,
       assigneeId: ids.agentAmira, territoryId: ids.territoryNorth,
       events: [
-        leadEvent(leadRimba, "lead.created", { companyName: "Rimba Haulage", vehicleCount: 14, qualification: "Manual_Review" }, daysAgo(30)),
+        leadEvent(leadRimba, "lead.created", { companyName: "Rimba Haulage", qualificationMetric: 14, qualification: "Manual_Review" }, daysAgo(30)),
         leadEvent(leadRimba, "lead.assigned", { agentId: ids.agentAmira, territoryId: ids.territoryNorth }, daysAgo(29)),
         leadEvent(leadRimba, "conversion.confirmed", {}, daysAgo(25)),
         leadEvent(leadRimba, "payment.confirmed", { amountMinor: 480_000, currency: "MYR" }, paidAt),
@@ -265,10 +265,10 @@ async function main() {
     const deltaPaidAt = daysAgo(50);
     const deltaReleaseAt = daysAgo(20);
     await insertLead(client, {
-      id: leadDelta, companyName: "Delta Cargo Sdn Bhd", vehicleCount: 40,
+      id: leadDelta, companyName: "Delta Cargo Sdn Bhd", qualificationMetric: 40,
       assigneeId: ids.agentWei, territoryId: ids.territoryNorth,
       events: [
-        leadEvent(leadDelta, "lead.created", { companyName: "Delta Cargo Sdn Bhd", vehicleCount: 40, qualification: "Manual_Review" }, daysAgo(70)),
+        leadEvent(leadDelta, "lead.created", { companyName: "Delta Cargo Sdn Bhd", qualificationMetric: 40, qualification: "Manual_Review" }, daysAgo(70)),
         leadEvent(leadDelta, "lead.assigned", { agentId: ids.agentWei, territoryId: ids.territoryNorth }, daysAgo(69)),
         leadEvent(leadDelta, "conversion.confirmed", {}, daysAgo(60)),
         leadEvent(leadDelta, "payment.confirmed", { amountMinor: 1_200_000, currency: "MYR" }, deltaPaidAt),
@@ -281,10 +281,10 @@ async function main() {
 
     const leadUtara = randomUUID();
     await insertLead(client, {
-      id: leadUtara, companyName: "Utara Express", vehicleCount: 3,
+      id: leadUtara, companyName: "Utara Express", qualificationMetric: 3,
       assigneeId: ids.agentFarid, territoryId: ids.territorySouth,
       events: [
-        leadEvent(leadUtara, "lead.created", { companyName: "Utara Express", vehicleCount: 3, qualification: "Automated_Setup" }, daysAgo(15)),
+        leadEvent(leadUtara, "lead.created", { companyName: "Utara Express", qualificationMetric: 3, qualification: "Automated_Setup" }, daysAgo(15)),
         leadEvent(leadUtara, "lead.assigned", { agentId: ids.agentFarid, territoryId: ids.territorySouth }, daysAgo(14)),
         leadEvent(leadUtara, "lead.lost", { reason: "Chose a competitor" }, daysAgo(12)),
       ],
