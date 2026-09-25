@@ -1,0 +1,43 @@
+{
+  "name": "tandem-crm",
+  "version": "0.1.0",
+  "description": "An embeddable, event-sourced partner commission engine for Postgres. No servers, no vendor lock-in.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "db/migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/angkutdigital/tandem-crm"
+  },
+  "keywords": [
+    "postgres",
+    "commission",
+    "affiliate",
+    "partner",
+    "event-sourcing",
+    "embeddable"
+  ],
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}
