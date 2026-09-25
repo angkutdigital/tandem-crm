@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { TandemAdminAdapter, TandemAuthAdapter, TandemMemberRow } from "./authAdapter";
+import type { TandemAdminAdapter, TandemAuthAdapter, TandemMemberRow } from "./authAdapter.js";
 import {
   getAnyCurrentTandemMembership,
   getCurrentTandemMember,
   isCurrentUserTandemAdmin,
-} from "./auth";
+} from "./auth.js";
 
 type FakeAdapterOptions = {
   userId?: string | null;

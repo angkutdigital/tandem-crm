@@ -10,8 +10,13 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
     }
   },
+  "sideEffects": false,
   "files": [
     "dist",
     "db/migrations",
@@ -36,7 +41,11 @@
     "event-sourcing",
     "embeddable"
   ],
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
   "devDependencies": {
+    "@types/pg": "^8.11.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.4"
   }

@@ -3,7 +3,7 @@ import {
   assertMoney, calculateCommissionMinor, commissionReleaseAt,
   defaultTandemConfig, defineTandemConfig, eventIdempotencyKey,
   qualifyLead, replayLeadEvents, type TandemEvent,
-} from "./index";
+} from "./index.js";
 
 const paidAt = "2026-01-01T00:00:00.000Z";
 const releaseAt = "2026-01-31T00:00:00.000Z";
@@ -15,7 +15,7 @@ function fact(sequence: number, type: TandemEvent["type"], data: TandemEvent["da
 }
 function paidLead(): TandemEvent[] {
   return [
-    fact(1, "lead.created", { companyName: "Fleet", vehicleCount: 15, qualification: "Automated_Setup", partnerId: "partner-1" }),
+    fact(1, "lead.created", { companyName: "Fleet", qualificationMetric: 15, qualification: "Automated_Setup", partnerId: "partner-1" }),
     fact(2, "lead.assigned", { agentId: "agent-1", territoryId: "territory-1" }),
     fact(3, "conversion.confirmed", {}),
     fact(4, "payment.confirmed", { amountMinor: 10_001, currency: "MYR" }),
@@ -26,15 +26,15 @@ const replay = (events: TandemEvent[]) => replayLeadEvents(events, "workspace-1"
 
 describe("Tandem qualification and idempotency", () => {
   it("honours the configured fleet threshold and snapshots qualification", () => {
-    expect(qualifyLead({ vehicleCount: 15 }, defaultTandemConfig)).toEqual({
+    expect(qualifyLead({ qualificationMetric: 15 }, defaultTandemConfig)).toEqual({
       status: "Automated_Setup", requiresHumanReview: false, shouldStartCheckout: true,
     });
-    expect(qualifyLead({ vehicleCount: 16 }, defaultTandemConfig).status).toBe("Manual_Review");
-    const config = defineTandemConfig({ qualification: { automatedSetupMaxVehicleCount: 3 }, commission: { holdDays: 14 } });
-    expect(qualifyLead({ vehicleCount: 4 }, config).status).toBe("Manual_Review");
-    expect(() => qualifyLead({ vehicleCount: -1 }, config)).toThrow();
-    expect(() => qualifyLead({ vehicleCount: 1.5 }, config)).toThrow();
-    expect(() => defineTandemConfig({ qualification: { automatedSetupMaxVehicleCount: 1 }, commission: { holdDays: 1.5 } })).toThrow();
+    expect(qualifyLead({ qualificationMetric: 16 }, defaultTandemConfig).status).toBe("Manual_Review");
+    const config = defineTandemConfig({ qualification: { automatedSetupMaxQualificationMetric: 3 }, commission: { holdDays: 14 } });
+    expect(qualifyLead({ qualificationMetric: 4 }, config).status).toBe("Manual_Review");
+    expect(() => qualifyLead({ qualificationMetric: -1 }, config)).toThrow();
+    expect(() => qualifyLead({ qualificationMetric: 1.5 }, config)).toThrow();
+    expect(() => defineTandemConfig({ qualification: { automatedSetupMaxQualificationMetric: 1 }, commission: { holdDays: 1.5 } })).toThrow();
   });
   it("normalizes source, retains event ID case, and avoids separator collisions", () => {
     expect(eventIdempotencyKey(" Stripe ", " evt_123 ")).toBe('["stripe","evt_123"]');

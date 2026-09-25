@@ -1,5 +1,5 @@
 -- Tandem P1: Supabase Auth identity mapping + RLS + workspace isolation.
--- Reviewed and applied 2026-09-25 — see src/packages/tandem-crm/README.md's
+-- Reviewed and applied 2026-09-25: see README.md's
 -- own "Security and migration status" section for the posture this
 -- completes (Auth/RLS/least-privilege was explicitly the gate before any
 -- Tandem route could be exposed).
@@ -23,7 +23,7 @@ create index tandem_members_user_idx on tandem.members (user_id);
 
 -- Helper functions, defined before any policy uses them. All three are
 -- `security definer` so they read tandem.members bypassing that table's
--- OWN RLS — the standard, recommended way to avoid a policy needing to
+-- OWN RLS: the standard, recommended way to avoid a policy needing to
 -- query the very table it protects (a well-known RLS recursion trap).
 -- None are given execute rights beyond `authenticated`; nothing here is
 -- callable by anon or exposed as a public RPC.
@@ -156,11 +156,11 @@ create policy tandem_commission_rules_admin_delete on tandem.commission_rules
 
 -- leads: an agent sees ONLY leads assigned to them; an owner/admin sees
 -- every lead in the workspace. This is the actual "scoped lead view"
--- P2 needs — enforced here at the database layer, not just in app code.
+-- P2 needs: enforced here at the database layer, not just in app code.
 -- No insert/update/delete policy for any authenticated role: leads are a
 -- rebuildable projection, written only by the transactional event/
 -- projection writer (P1's other open item), which runs under the
--- service role — never a direct authenticated write.
+-- service role, never a direct authenticated write.
 alter table tandem.leads enable row level security;
 create policy tandem_leads_select on tandem.leads
   for select
@@ -171,9 +171,9 @@ create policy tandem_leads_select on tandem.leads
 
 -- events: append-only audit log. An owner/admin can read every event in
 -- their workspace; an agent can read events for leads they can see (same
--- assignee check as above, via a lookup against tandem.leads — a plain
+-- assignee check as above, via a lookup against tandem.leads: a plain
 -- subquery is fine here, this isn't self-referential). No client insert/
--- update/delete policy at all — the immutability trigger already blocks
+-- update/delete policy at all; the immutability trigger already blocks
 -- update/delete outright, and inserts only ever come from the service
 -- role's own transactional writer.
 alter table tandem.events enable row level security;
@@ -188,9 +188,9 @@ create policy tandem_events_select on tandem.events
     )
   );
 
--- payouts / payout_ledger: same shape as leads — an agent sees only their
+-- payouts / payout_ledger: same shape as leads, an agent sees only their
 -- own payouts (matched via the lead they're assigned), an owner/admin
--- sees everything. No client write policy — payouts are written by
+-- sees everything. No client write policy; payouts are written by
 -- release_due_commissions() and the (not yet built) commission-approval
 -- action, both service-role operations.
 alter table tandem.payouts enable row level security;

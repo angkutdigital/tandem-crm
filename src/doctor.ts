@@ -4,8 +4,8 @@ type PostgrestErrorBody = { code?: string; message?: string };
 
 /**
  * Standalone setup check for a Tandem installation. Uses plain `fetch`
- * (no Supabase SDK) so it can run from anywhere — a CLI, a CI job, or a
- * support engineer's laptop — against a live project from the outside.
+ * (no Supabase SDK) so it can run from anywhere: a CLI, a CI job, or a
+ * support engineer's laptop, against a live project from the outside.
  */
 export async function runTandemDoctor(
   supabaseUrl: string,
@@ -58,7 +58,7 @@ export async function runTandemDoctor(
     ];
   }
 
-  // Schema IS exposed, but this key has no grant — the expected outcome for
+  // Schema IS exposed, but this key has no grant: the expected outcome for
   // a public/anon key with no session. Only `authenticated` should have grants.
   if (response.status === 401 || code === "42501") {
     return [
@@ -92,7 +92,7 @@ export async function runTandemDoctor(
       name: "tandem schema reachable",
       passed: false,
       detail: `Unexpected response: HTTP ${response.status}${
-        errorBody.message ? ` — ${errorBody.message}` : ""
+        errorBody.message ? `: ${errorBody.message}` : ""
       }`,
     },
   ];

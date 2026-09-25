@@ -23,7 +23,7 @@ export type TandemAuthAdapter = {
 
 export type TandemAdminAdapter = {
   /** Creates the membership row linking an already-existing auth user to a
-   * workspace. Does NOT create the auth user itself — the caller is
+   * workspace. Does NOT create the auth user itself; the caller is
    * responsible for that (e.g. Supabase Auth's admin inviteUserByEmail, or
    * whatever the host auth provider's equivalent is) and passes the
    * resulting userId in here. */
