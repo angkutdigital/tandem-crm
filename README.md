@@ -43,6 +43,14 @@ const leads = await withTandemSession(pool, currentUserId, (client) =>
 );
 ```
 
+**One-time setup this requires:** `withTandemSession` assumes the `authenticated` role for the duration of the transaction, unconditionally. This matters because RLS is bypassed entirely for a table's owner and for a superuser, and the role a hosted Postgres (Neon, RDS, a fresh Supabase project) hands you by default is almost always exactly the role that owns everything it creates. Grant the role your connection string actually uses membership in `authenticated` once:
+
+```sql
+grant authenticated to your_connection_role;
+```
+
+Skipping this doesn't silently do nothing: `set local role authenticated` fails loudly with a permission error rather than quietly running unenforced.
+
 The `tandem-crm/db` entry is separate from the main `tandem-crm` entry on purpose: it pulls in the `pg` driver, while the core engine stays dependency-free and safe to import in edge runtimes.
 
 ### Upgrading a hand-migrated database
