@@ -2,7 +2,7 @@
 
 An embeddable, event-sourced partner-attribution and commission-payout engine for Postgres. Install it directly into your own Next.js (or any Node) app. No separate service to run, no vendor lock-in.
 
-**Status:** in production use today, powering a real partner login and commission-tracking flow for [Utuh](https://utuh.com.my), the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; a generic/BetterAuth adapter for Neon and other plain-Postgres hosts is on the roadmap.
+**Status:** in production use today, powering a real partner login and commission-tracking flow for [Utuh](https://utuh.com.my), the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; identity resolution and RLS are also verified against a plain, non-Supabase Postgres 16 instance, so implementing `TandemAuthAdapter` against Neon, RDS, Clerk, BetterAuth, or your own session table needs no changes to the package itself. See [CHANGELOG.md](./CHANGELOG.md) for what shipped when.
 
 ## What the package does
 
