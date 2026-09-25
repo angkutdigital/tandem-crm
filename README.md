@@ -94,11 +94,15 @@ Ramp tracks whether a sales agent/partner has completed a workspace-defined chec
 
 Onboarding events live in their own append-only log, `tandem.agent_events`, rather than `tandem.events`: events there require a `lead_id`, and onboarding events are scoped to an agent, not a lead. `replayAgentOnboardingEvents()` rebuilds one agent's state the same way `replayLeadEvents()` does; `isAgentCertified(state, requiredStepCodes)` checks both `certifiedAt` and that every currently-required step is actually in the completed list, so the answer stays correct even if a workspace adds a new required step after an agent was certified under the old list.
 
+## Lead routing
+
+A workspace can set an auto-assignment preset in `tandem.routing_settings`: `round_robin` (the default; absence of a row means round-robin), `least_loaded`, or `manual` (routing is a no-op, matching what happens today by default). `selectAgentForLead(candidates, strategy, lastAssignedAgentId)` is the pure decision function: the caller queries the eligible agents (already filtered by territory coverage via `tandem.agent_territories`) and their open lead counts, calls this function, then appends the resulting `lead.assigned` event itself. Tandem recommends; it does not assign.
+
 ## Open items
 
 - No integration tests against a real database yet (the RLS/portability work in this repo's history was verified by hand against a real disposable Postgres instance, not via an automated CI job; that's still a gap).
 - No support for partial refunds, multiple payments per lead, or post-payout clawbacks yet: single full payment / single full refund only.
-- No automatic lead-routing (round-robin, least-loaded) yet; a lead's `assignee_id` is set directly by whatever the caller passes to `lead.assigned`.
+- The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
 
 ## Local verification
 

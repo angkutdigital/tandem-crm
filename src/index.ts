@@ -4,3 +4,4 @@ export * from "./auth.js";
 export * from "./authAdapter.js";
 export * from "./doctor.js";
 export * from "./ramp.js";
+export * from "./routing.js";
