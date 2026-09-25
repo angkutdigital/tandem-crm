@@ -5,3 +5,4 @@ export * from "./authAdapter.js";
 export * from "./doctor.js";
 export * from "./ramp.js";
 export * from "./routing.js";
+export * from "./coaster.js";

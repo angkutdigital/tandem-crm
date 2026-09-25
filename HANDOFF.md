@@ -54,7 +54,21 @@ Done and pushed:
 - tandem-site landing page copy updated: Ramp and Core now correctly show
   "Live" in the roadmap and the hero sidebar (was stuck on "Planned" from
   before Ramp existed). CRM/Admin UI shows a new "In progress" status
-  instead of overclaiming "Live" or underclaiming "Planned".
+  instead of overclaiming "Live" or underclaiming "Planned". The
+  "BetterAuth adapter, Planned" card was swapped for "Auth adapter, Live"
+  since bring-your-own-auth already works today via `TandemAuthAdapter`,
+  for any provider, not just BetterAuth. The whole page was also
+  repositioned from "for Next.js" to "for Postgres" (the engine has zero
+  framework dependency; only the example dashboard is Next.js).
+- Coaster's first slice, added this session: `src/coaster.ts`, migration
+  011, README section, 37 tests. Partner-initiated commission disputes
+  (`untracked` / `incorrect` / `declined`, matching how Awin models this),
+  operator-only resolution enforced by RLS (not just convention), and the
+  actual "brake": `release_due_commissions()` now skips a payout with an
+  open or queried dispute. Resolving a dispute only records the outcome
+  (upheld/dismissed); it does not create a replacement commission, adjust
+  an amount, or execute a clawback on an already-paid commission. See
+  "What Coaster does not do yet" below.
 
 In progress, not done:
 
@@ -67,9 +81,25 @@ In progress, not done:
 - Task list item "Verify dashboard end-to-end in a real browser" is
   pending until the remaining pages exist.
 
+What Coaster does not do yet (in rough priority order for whoever
+continues it):
+
+- Executing a resolved dispute: creating a new commission for an
+  "untracked, upheld" outcome, adjusting the amount for "incorrect,
+  upheld", re-approving for "declined, upheld". Right now the outcome is
+  just recorded; nothing acts on it.
+- Clawback of a commission that was already paid before the refund/dispute
+  happened. `domain.ts`'s `payment.refunded` still explicitly refuses to
+  touch a `paid` commission, on purpose; Coaster has no mechanism at all
+  for "this was paid, now we need it back."
+- A scheduled SQL function that auto-resolves overdue disputes (mirroring
+  `release_due_commissions()`); `isDisputeOverdue()` is a pure check only,
+  nothing calls it on a schedule.
+- Admin-initiated holds unrelated to a partner's own dispute (fraud
+  review, compliance), and any dashboard UI for any of this.
+
 Not started:
 
-- Coaster (clawbacks, disputes, payout blocking).
 - Final landing-page pass, packaging (SECURITY.md, CONTRIBUTING.md, npm
   publish prep, CI-automated RLS test), final vitest + Playwright run.
 
@@ -116,9 +146,39 @@ Not started:
   should probably become a checked-in setup script at some point; it
   isn't one yet.
 
+- **A PL/pgSQL `FOR row IN SELECT ...` loop variable is not bound inside
+  its own defining query.** `release_due_commissions()`'s loop is
+  `for due in select * from tandem.payouts where ... loop`; referencing
+  `due.id` inside a correlated subquery *within that same select* (e.g.
+  `and not exists (select 1 from tandem.disputes d where d.payout_id =
+  due.id ...)`) does not error, but silently resolves to null, so the
+  condition is vacuously true and excludes nothing. Found by actually
+  running the function against a real disputed payout and watching it get
+  released anyway, not by reading the SQL. The fix is to alias the source
+  table (`select p.* from tandem.payouts p where ... and not exists
+  (select 1 from ... where d.payout_id = p.id ...)`) and correlate to that
+  alias instead of the loop variable. If you write another loop like this,
+  test it live; this class of bug produces no error at all, in either
+  `CREATE FUNCTION` or at call time.
+- **DeepSeek will confidently rewrite an existing function from memory
+  instead of copying the version you gave it**, even when the brief pastes
+  the exact source and says "copy this verbatim, add one condition." When
+  asked to extend `release_due_commissions()`, it silently invented a
+  different signature (`returns void` instead of `returns table (payout_id
+  uuid)`), flipped `security invoker` to `security definer` (a real RLS-
+  bypass regression, given this project's whole history with that exact
+  class of bug), and referenced columns that don't exist on
+  `tandem.payouts` (`due_at`, a `'pending'` status). None of this was
+  subtle; it just didn't match the file it was handed. For a change to an
+  existing, security-sensitive function, either write the diff yourself or
+  read the model's output character-by-character against the original
+  before applying it, don't assume "verbatim" in the prompt was followed.
+
 ## Suggested next step
 
-Given the budget concern raised this session: don't start Coaster or the
-remaining dashboard pages without checking in first. The natural
-checkpoint is right here -- Overview page done and verified, roadmap copy
-accurate. Ask what to prioritize with what's left.
+Budget is very low as of this checkpoint. Coaster's first slice (schema,
+reducer, RLS, the release-function brake) is done, tested, and
+live-verified against real Postgres, migration and README updated,
+committed and pushed. Do not start executing dispute outcomes, clawback,
+the auto-approve scheduler, or the remaining dashboard pages without
+checking in with the user first. Ask what to prioritize next.

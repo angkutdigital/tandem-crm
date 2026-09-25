@@ -106,10 +106,19 @@ Onboarding events live in their own append-only log, `tandem.agent_events`, rath
 
 A workspace can set an auto-assignment preset in `tandem.routing_settings`: `round_robin` (the default; absence of a row means round-robin), `least_loaded`, or `manual` (routing is a no-op, matching what happens today by default). `selectAgentForLead(candidates, strategy, lastAssignedAgentId)` is the pure decision function: the caller queries the eligible agents (already filtered by territory coverage via `tandem.agent_territories`) and their open lead counts, calls this function, then appends the resulting `lead.assigned` event itself. Tandem recommends; it does not assign.
 
+## Coaster: disputes on a commission
+
+Coaster tracks a partner-initiated dispute against a commission that's already held, eligible, or approved, and an operator's resolution of it. Partners can open a dispute; only a workspace owner or admin can resolve one, enforced by the database's own row-level security, not just application convention. Three categories, matching how Awin (the largest affiliate network in Europe) models this: `untracked` ("this sale never showed up"), `incorrect` (the amount is wrong; carries an `expectedAmountMinor`), and `declined` ("this should have been approved"). An operator can also ask a question (`dispute.queried`) before resolving.
+
+Dispute events live in their own append-only log, `tandem.dispute_events`, for the same reason Ramp's do: they don't fit `tandem.events`' existing shape. `replayDisputeEvents()` rebuilds one dispute's state; `disputeAutoApproveAt(openedAt, autoApproveDays)` computes and snapshots a deadline at open time (Awin's own default is 75 days, but this package does not hardcode it, the caller decides); `isDisputeOverdue(state, now)` is a pure check the caller can act on however it wants. Like Core's `commission.held`, resolving a dispute only records the outcome (`upheld` or `dismissed`); Coaster does not itself create a replacement commission, adjust an amount, or claw back money already paid. That execution, and a scheduled function that auto-resolves overdue disputes, are not built yet.
+
+The one place Coaster changes Core's own behavior: `release_due_commissions()` now skips a payout with an open or queried dispute, even past its release date. Everywhere else, Coaster only reads Core's leads and payouts.
+
 ## Open items
 
 - No integration tests against a real database yet (the RLS/portability work in this repo's history was verified by hand against a real disposable Postgres instance, not via an automated CI job; that's still a gap).
-- No support for partial refunds, multiple payments per lead, or post-payout clawbacks yet: single full payment / single full refund only.
+- No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only.
+- Coaster records a dispute's outcome but does not execute it: no automatic replacement commission, amount adjustment, or clawback of an already-paid commission yet. Also missing: a scheduled function to auto-resolve overdue disputes (mirroring `release_due_commissions()`), and admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
 
 ## Local verification
