@@ -20,6 +20,44 @@ Inbound adapters may receive events from any CRM, payment, chat, or manual sourc
 
 Agents, territories, mappings, commission rules, and workspace settings are mutable configuration. Lead creation, assignment, conversion, payment, refund, and commission transitions are immutable business facts. Flexible lead attributes belong in the lead projection; only business-significant changes should become typed events. The current reducer models one commission hold per lead and full refunds before payout. Partial refunds, multiple payments, and post-payout clawbacks require additional event types before production use.
 
+## Database setup
+
+Tandem ships its schema as SQL files in `db/migrations/` and a runner that applies them. Run it on deploy or at startup; it only applies what's new, so repeat runs are safe.
+
+```ts
+import { createTandemPool, applyTandemMigrations } from "tandem-crm/db";
+
+const pool = createTandemPool(process.env.DATABASE_URL!);
+const { applied } = await applyTandemMigrations(pool);
+```
+
+Each file runs in its own transaction, so a failed migration rolls back completely instead of leaving a half-built schema. Applied files are recorded in `tandem.schema_migrations`.
+
+Per-request queries go through `withTandemSession`, which tells the row-level security policies who the caller is:
+
+```ts
+import { withTandemSession } from "tandem-crm/db";
+
+const leads = await withTandemSession(pool, currentUserId, (client) =>
+  client.query("select * from tandem.leads")
+);
+```
+
+The `tandem-crm/db` entry is separate from the main `tandem-crm` entry on purpose: it pulls in the `pg` driver, while the core engine stays dependency-free and safe to import in edge runtimes.
+
+### Upgrading a hand-migrated database
+
+If the `tandem` schema was created by running the SQL files by hand (before the runner existed), the runner refuses to touch it rather than guess what's already there. Record the files that database already has, once, then run the runner as normal:
+
+```sql
+create table tandem.schema_migrations (filename text primary key, applied_at timestamptz not null default now());
+insert into tandem.schema_migrations (filename) values
+  ('001_tandem_core.sql'), ('002_tandem_events.sql'), ('003_tandem_payouts.sql'),
+  ('004_release_due_commissions.sql'), ('005_tandem_auth_rls.sql'), ('006_tandem_grants.sql');
+```
+
+List only the files that were actually applied. The runner then applies everything after them.
+
 ## Security and migration status
 
 The `tandem` schema is applied to production and exposed to PostgREST. Row-level security is active: workspace membership rows in `tandem.members` gate access, and the leads view is scoped by RLS (agents see their own leads, owners/admins see all). The schema's release function uses caller privileges and grants no public execution. A service-role key must stay server-side and cannot substitute for tested browser authorization.

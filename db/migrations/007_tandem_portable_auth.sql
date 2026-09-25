@@ -1,3 +1,5 @@
+-- tandem:supersedes 005_tandem_auth_rls.sql 006_tandem_grants.sql
+--
 -- Tandem P1 portability follow-up: make the 005/006 auth + RLS layer work
 -- on ANY Postgres host (Neon, RDS, Aiven, plain Postgres), not just
 -- Supabase.

@@ -3,7 +3,7 @@ import {
   assertMoney, calculateCommissionMinor, commissionReleaseAt,
   defaultTandemConfig, defineTandemConfig, eventIdempotencyKey,
   qualifyLead, replayLeadEvents, type TandemEvent,
-} from "./index";
+} from "./index.js";
 
 const paidAt = "2026-01-01T00:00:00.000Z";
 const releaseAt = "2026-01-31T00:00:00.000Z";

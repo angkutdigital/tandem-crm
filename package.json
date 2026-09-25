@@ -10,8 +10,13 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
     }
   },
+  "sideEffects": false,
   "files": [
     "dist",
     "db/migrations",

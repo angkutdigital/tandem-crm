@@ -1,4 +1,4 @@
-import type { TandemAuthAdapter, TandemMemberRow } from "./authAdapter";
+import type { TandemAuthAdapter, TandemMemberRow } from "./authAdapter.js";
 
 export type TandemMember = TandemMemberRow; // keep existing shape/name for callers
 

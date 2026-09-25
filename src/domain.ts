@@ -1,4 +1,4 @@
-import type { TandemConfig } from "./tandem.config";
+import type { TandemConfig } from "./tandem.config.js";
 
 export const tandemLeadStatuses = [
   "Automated_Setup", "Manual_Review", "Won", "Commission_Hold",
