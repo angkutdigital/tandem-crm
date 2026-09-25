@@ -30,6 +30,10 @@ for the current state).
   create a replacement commission.
 - A reference dashboard example (`examples/dashboard`, Next.js + shadcn/ui)
   demonstrating a real consumer of the package.
+- An automated RLS check (`scripts/ci-rls-check.mjs`) that runs on every
+  push and PR against a real Postgres service container: applies every
+  migration and asserts cross-tenant isolation actually holds, instead of
+  relying on someone re-verifying it by hand each time.
 
 ### Fixed
 

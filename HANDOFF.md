@@ -81,6 +81,21 @@ In progress, not done:
 - Task list item "Verify dashboard end-to-end in a real browser" is
   pending until the remaining pages exist.
 
+Also done this session: a `CHANGELOG.md` (Keep a Changelog format, repo
+root), a fixed README status line that had the same "still says planned"
+staleness as the site's old roadmap (it claimed a BetterAuth/plain-Postgres
+adapter was still on the roadmap after this repo already shipped and
+verified exactly that), and an automated cross-tenant RLS check
+(`scripts/ci-rls-check.mjs`) wired into CI as a new `rls` job with a real
+Postgres 16 service container. It applies every migration, seeds two
+workspaces, and asserts isolation holds; verified it actually catches a
+regression by temporarily removing `withTandemSession`'s `set local role
+authenticated` line from the built `dist/` and confirming all 6 checks
+fail loudly, then restoring it and confirming they pass again. It does
+not yet cover Ramp/routing/Coaster's own tables or the write side (an
+agent inserting/updating a row that isn't theirs) -- noted in the
+README's Open items as a known gap, not a silent one.
+
 What Coaster does not do yet (in rough priority order for whoever
 continues it):
 

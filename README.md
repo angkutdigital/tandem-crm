@@ -116,7 +116,7 @@ The one place Coaster changes Core's own behavior: `release_due_commissions()` n
 
 ## Open items
 
-- No integration tests against a real database yet (the RLS/portability work in this repo's history was verified by hand against a real disposable Postgres instance, not via an automated CI job; that's still a gap).
+- The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers cross-tenant isolation for members and leads. It does not yet cover Ramp, routing, or Coaster's tables, or the write side (an agent inserting/updating a row that isn't theirs).
 - No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only.
 - Coaster records a dispute's outcome but does not execute it: no automatic replacement commission, amount adjustment, or clawback of an already-paid commission yet. Also missing: a scheduled function to auto-resolve overdue disputes (mirroring `release_due_commissions()`), and admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
@@ -133,3 +133,12 @@ npm run build
 ```
 
 No database credentials or network access are needed for these tests. CI runs the same steps on every push and pull request.
+
+CI also runs `scripts/ci-rls-check.mjs` against a real, disposable Postgres service container: applies every migration, seeds two workspaces, and asserts cross-tenant isolation actually holds (a member sees only their own workspace's rows, a query with no identity set sees nothing, not everything). To run it yourself against a local Postgres:
+
+```sh
+npm run build
+DATABASE_URL=postgres://user:pass@localhost:5432/some_throwaway_db node scripts/ci-rls-check.mjs
+```
+
+Point it at a database you don't mind seeding test data into; the script does not clean up after itself.
