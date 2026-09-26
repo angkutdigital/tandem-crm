@@ -95,7 +95,9 @@ async function main() {
   );
   check(
     "user A sees only workspace A's members",
-    membersAsA.rows.length === 1 && membersAsA.rows[0].workspace_id === workspaceA
+    // Two rows now that agentUserA also belongs to workspace A (the owner
+    // row and the agent row), but every one of them must be workspace A's.
+    membersAsA.rows.length === 2 && membersAsA.rows.every((row) => row.workspace_id === workspaceA)
   );
 
   const leadsAsA = await withTandemSession(pool, userA, (client) => client.query("select id from tandem.leads"));
