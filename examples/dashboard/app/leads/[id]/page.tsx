@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { TrailActivity } from "@/components/trail-activity";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -8,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { getLeadDetail, requireCurrentMember } from "@/lib/queries";
+import { getLeadDetail, getTrailEntries, requireCurrentMember } from "@/lib/queries";
 
 function humanizeStatus(status: string) {
   return status.replace(/_/g, " ");
@@ -46,7 +47,10 @@ function formatDate(value: string) {
 export default async function LeadDetailPage(props: PageProps<"/leads/[id]">) {
   const { id } = await props.params;
   const member = await requireCurrentMember();
-  const lead = await getLeadDetail(member.userId, id);
+  const [lead, trailEntries] = await Promise.all([
+    getLeadDetail(member.userId, id),
+    getTrailEntries(member.userId, id),
+  ]);
 
   if (!lead) {
     return (
@@ -109,6 +113,12 @@ export default async function LeadDetailPage(props: PageProps<"/leads/[id]">) {
           </CardHeader>
         </Card>
       </section>
+
+      <Card>
+        <CardContent className="pt-(--card-spacing)">
+          <TrailActivity leadId={lead.id} entries={trailEntries} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

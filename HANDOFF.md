@@ -3,6 +3,36 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): Trail activity made usable in the reference CRM
+
+Work happened on `codex/coaster-resolution-verification` after Earnings.
+
+- **Lead activity is now a real workflow:** each lead detail page has an
+  Activity timeline with a compact `Log activity` form (phone, email, or
+  physical interaction; sales stage; confidence; free-text note). This is
+  the relationship context a normal CRM needs without introducing a second
+  lead/contact/task model into the package.
+- **Corrections retain trust:** an agent can correct an activity or retract
+  it. Both use Trail's existing immutable event stream and rebuildable
+  projection; the UI shows `corrected` and `retracted` rather than silently
+  deleting history. Retracted records can no longer be edited or retracted
+  again.
+- **Kept the package lightweight:** no core API, schema, or dependency was
+  added. This is reference-dashboard composition over the existing Trail
+  domain layer, actions, migrations, and RLS policies.
+- **Verified end-to-end in isolated Postgres:** logged an email interaction,
+  corrected its note and confidence, then retracted it. The browser timeline
+  showed each resulting state with no console errors. Database verification
+  found exactly one each of `trail.visit_logged`, `trail.entry_corrected`,
+  and `trail.entry_retracted`; its projection matched the final UI state.
+- **Checks:** dashboard TypeScript, root typecheck, and `npm test` (87
+  tests) pass. No production build attempt was added because this host's
+  Turbopack port-binding restriction is already recorded below.
+
+**Next bounded milestone:** run a short Product Hunt demo-flow pass: a
+clean seed, a first-run walkthrough, and an honest readiness checklist. Do
+not begin one-click provisioning until this demo flow is coherent.
+
 ## Update (2026-09-26): Earnings dashboard completed
 
 Work happened on `codex/coaster-resolution-verification` after the Coaster
