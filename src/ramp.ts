@@ -20,6 +20,7 @@ export type AgentOnboardingEvent = AgentOnboardingEventBase & (
   | { type: "onboarding.started"; data: Record<string, never> }
   | { type: "onboarding.step_completed"; data: { stepCode: string } }
   | { type: "onboarding.certified"; data: Record<string, never> }
+  | { type: "onboarding.reopened"; data: Record<string, never> }
 );
 
 export type AgentOnboardingState = {
@@ -96,6 +97,14 @@ export function replayAgentOnboardingEvents(events: readonly AgentOnboardingEven
       case "onboarding.certified":
         requireTransition(state !== null && state.certifiedAt === null, event.type);
         state = { ...currentState(state), certifiedAt: event.occurredAt, lastSequence };
+        break;
+      case "onboarding.reopened":
+        // A required-step template is mutable. Reopening preserves every
+        // completed step and the immutable prior certification event while
+        // making the agent eligible to complete a newly-required step and
+        // certify again. The database limits this event to workspace admins.
+        requireTransition(state !== null && state.certifiedAt !== null, event.type);
+        state = { ...currentState(state), certifiedAt: null, lastSequence };
         break;
       default:
         throw new Error(`unsupported event type: ${(event as { type: string }).type}`);

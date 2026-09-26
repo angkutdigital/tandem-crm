@@ -307,6 +307,182 @@ export async function certifyAgent(agentId: string): Promise<void> {
   await appendOnboardingEvent(agentId, "onboarding.certified", {});
 }
 
+/** Only an owner/admin may reopen a certification after the workspace changes
+ * its requirements. The database enforces the same boundary as defence in
+ * depth; this check gives the application a clear, immediate error too. */
+export async function reopenAgentCertification(agentId: string): Promise<void> {
+  const member = await requireCurrentMember();
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can reopen certification");
+  }
+  await appendOnboardingEvent(agentId, "onboarding.reopened", {});
+}
+
+/** A profile is deliberately separate from login provisioning: Nest can create
+ * the operational agent record, while the host's auth system remains the only
+ * authority that links a real sign-in identity through tandem.members. */
+export async function createAgentProfile(input: {
+  displayName: string;
+  externalRef?: string;
+}): Promise<string> {
+  const member = await requireCurrentMember();
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can add an agent profile");
+  }
+  const displayName = input.displayName.trim();
+  const externalRef = input.externalRef?.trim() || null;
+  if (!displayName) throw new Error("agent name is required");
+
+  const agentId = randomUUID();
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.agents (id, workspace_id, display_name, external_ref)
+       values ($1, $2, $3, $4)`,
+      [agentId, WORKSPACE_ID, displayName, externalRef]
+    )
+  );
+  revalidatePath("/");
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${agentId}`);
+  return agentId;
+}
+
+function requireWorkspaceManager(member: { role: "owner" | "admin" | "agent" }): void {
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can change workspace setup");
+  }
+}
+
+export async function createOnboardingStep(input: {
+  code: string;
+  label: string;
+  required: boolean;
+}): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const code = input.code.trim().toLowerCase();
+  const label = input.label.trim();
+  if (!/^[a-z][a-z0-9_]*$/.test(code)) {
+    throw new Error("step code must start with a letter and use lowercase letters, numbers, or underscores");
+  }
+  if (!label) throw new Error("step label is required");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const order = await client.query<{ next_order: number }>(
+      "select coalesce(max(sort_order), -1) + 1 as next_order from tandem.onboarding_steps where workspace_id = $1",
+      [WORKSPACE_ID]
+    );
+    await client.query(
+      `insert into tandem.onboarding_steps (workspace_id, code, label, required, sort_order)
+       values ($1, $2, $3, $4, $5)`,
+      [WORKSPACE_ID, code, label, input.required, order.rows[0].next_order]
+    );
+  });
+  revalidatePath("/");
+  revalidatePath("/agents");
+  revalidatePath("/settings/setup");
+}
+
+export async function createTerritory(input: { name: string; code: string }): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  if (!name) throw new Error("territory name is required");
+  if (!/^[A-Z0-9_-]+$/.test(code)) throw new Error("territory code must use uppercase letters, numbers, hyphens, or underscores");
+
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.territories (workspace_id, name, code)
+       values ($1, $2, $3)`,
+      [WORKSPACE_ID, name, code]
+    )
+  );
+  revalidatePath("/settings/setup");
+  revalidatePath("/settings/routing");
+}
+
+export async function assignAgentToTerritory(agentId: string, territoryId: string): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.agent_territories (workspace_id, agent_id, territory_id)
+       values ($1, $2, $3)
+       on conflict do nothing`,
+      [WORKSPACE_ID, agentId, territoryId]
+    )
+  );
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${agentId}`);
+  revalidatePath("/settings/setup");
+}
+
+export async function createCommissionRule(input: {
+  productTag: string;
+  currency: string;
+  basisPoints: number;
+  holdDays: number;
+}): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const productTag = input.productTag.trim();
+  const currency = input.currency.trim().toUpperCase();
+  if (!productTag) throw new Error("product tag is required");
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error("currency must be a three-letter ISO code, for example MYR");
+  if (!Number.isSafeInteger(input.basisPoints) || input.basisPoints < 0 || input.basisPoints > 10_000) {
+    throw new Error("commission rate must be between 0 and 10,000 basis points");
+  }
+  if (!Number.isSafeInteger(input.holdDays) || input.holdDays < 0) {
+    throw new Error("hold days must be a whole number of zero or more");
+  }
+
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.commission_rules
+         (workspace_id, product_tag, currency, basis_points, hold_days)
+       values ($1, $2, $3, $4, $5)`,
+      [WORKSPACE_ID, productTag, currency, input.basisPoints, input.holdDays]
+    )
+  );
+  revalidatePath("/settings/setup");
+}
+
+/** Links a user the host has already authenticated to one operational agent
+ * profile. This never creates credentials or changes a person's workspace
+ * privilege: managers may only add an agent membership, and an existing
+ * membership is rejected rather than overwritten. */
+export async function linkExistingUserToAgent(input: { userId: string; agentId: string }): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const userId = input.userId.trim();
+  const agentId = input.agentId.trim();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuid.test(userId)) throw new Error("host user ID must be a UUID from your verified auth system");
+  if (!uuid.test(agentId)) throw new Error("select a valid agent profile");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const agent = await client.query(
+      "select id from tandem.agents where id = $1 and workspace_id = $2",
+      [agentId, WORKSPACE_ID]
+    );
+    if (agent.rowCount !== 1) throw new Error("agent profile was not found in this workspace");
+    const existing = await client.query(
+      "select id from tandem.members where workspace_id = $1 and user_id = $2",
+      [WORKSPACE_ID, userId]
+    );
+    if (existing.rowCount !== 0) throw new Error("this host account is already linked to this workspace");
+    await client.query(
+      `insert into tandem.members (workspace_id, user_id, role, agent_id)
+       values ($1, $2, 'agent', $3)`,
+      [WORKSPACE_ID, userId, agentId]
+    );
+  });
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${agentId}`);
+  revalidatePath("/settings/setup");
+}
+
 export async function setRoutingStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, (client) =>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -9,11 +10,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AgentTerritoryManager } from "@/components/agent-territory-manager";
 import {
   getAgentDetail,
+  getAgentTerritoryIds,
   getOnboardingSteps,
+  getTerritories,
   requireCurrentMember,
 } from "@/lib/queries";
+import { reopenAgentCertification } from "@/lib/actions";
 
 function humanizeStatus(status: string) {
   return status.replace(/_/g, " ");
@@ -41,9 +46,10 @@ function formatDate(value: string) {
 export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) {
   const { id } = await props.params;
   const member = await requireCurrentMember();
-  const [agent, steps] = await Promise.all([
+  const [agent, steps, territories] = await Promise.all([
     getAgentDetail(member.userId, id),
     getOnboardingSteps(member.userId),
+    getTerritories(member.userId),
   ]);
 
   if (!agent) {
@@ -59,12 +65,21 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
   }
 
   const requiredSteps = steps.filter((step) => step.required);
+  const assignedTerritoryIds = await getAgentTerritoryIds(member.userId, agent.id);
+  const assignedTerritories = territories.filter((territory) => assignedTerritoryIds.includes(territory.id));
+  const canManageWorkspace = member.role === "owner" || member.role === "admin";
   const completedRequired = requiredSteps.filter((step) =>
     agent.completedStepCodes.includes(step.code)
   ).length;
+  const certificationCurrent = agent.certifiedAt !== null && completedRequired === requiredSteps.length;
+  const canReopenCertification = (member.role === "owner" || member.role === "admin")
+    && agent.certifiedAt !== null
+    && !certificationCurrent;
 
-  const statusBadge = agent.certifiedAt ? (
+  const statusBadge = certificationCurrent ? (
     <Badge>Certified</Badge>
+  ) : agent.certifiedAt ? (
+    <Badge variant="destructive">Needs review</Badge>
   ) : agent.startedAt ? (
     <Badge variant="secondary">In progress</Badge>
   ) : (
@@ -82,13 +97,31 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
           {statusBadge}
         </div>
         <p className="text-sm text-muted-foreground">
-          {agent.certifiedAt
-            ? `Certified ${formatDate(agent.certifiedAt)}`
+          {certificationCurrent
+            ? `Certified ${formatDate(agent.certifiedAt!)}`
+            : agent.certifiedAt
+              ? "Certification needs review after the onboarding requirements changed"
             : agent.startedAt
               ? `Started onboarding ${formatDate(agent.startedAt)}`
               : "Has not started onboarding yet"}
         </p>
       </header>
+
+      {canReopenCertification ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Certification needs review</CardTitle>
+            <CardDescription>
+              This agent was certified before the current required checklist was complete. Reopen the lifecycle so they can complete the new requirement and certify again; prior history remains in the audit log.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form action={reopenAgentCertification.bind(null, agent.id)}>
+              <Button type="submit" variant="outline">Reopen certification</Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -125,6 +158,32 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
               })}
             </ul>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Territory coverage</CardTitle>
+          <CardDescription>
+            Automatic routing considers this agent only for leads in the territories listed here.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {assignedTerritories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No territory coverage yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {assignedTerritories.map((territory) => (
+                <Badge key={territory.id} variant="secondary">{territory.name} · {territory.code}</Badge>
+              ))}
+            </div>
+          )}
+          <AgentTerritoryManager
+            agentId={agent.id}
+            territories={territories}
+            assignedTerritoryIds={assignedTerritoryIds}
+            canManage={canManageWorkspace}
+          />
         </CardContent>
       </Card>
 

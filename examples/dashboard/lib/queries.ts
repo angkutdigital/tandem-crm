@@ -65,6 +65,14 @@ export type AgentSummary = {
   openLeadCount: number;
 };
 
+/** A certification fact stays current only while every currently-required
+ * step is complete. Requirement templates can change after certification. */
+export function isAgentCurrentlyCertified(
+  agent: Pick<AgentSummary, "certifiedAt" | "completedStepCount" | "requiredStepCount">
+): boolean {
+  return agent.certifiedAt !== null && agent.completedStepCount === agent.requiredStepCount;
+}
+
 export async function getAgentSummaries(userId: string): Promise<AgentSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
@@ -80,17 +88,22 @@ export async function getAgentSummaries(userId: string): Promise<AgentSummary[]>
       `select
          a.id, a.display_name, a.active,
          s.started_at, s.certified_at,
-         coalesce(array_length(nullif(cs.completed, '{}'::text[]), 1), 0) as completed_step_count,
+         coalesce((
+           select count(*)
+           from tandem.onboarding_steps os
+           where os.workspace_id = a.workspace_id and os.required
+             and exists (
+               select 1 from tandem.agent_events e
+               where e.workspace_id = a.workspace_id and e.agent_id = a.id
+                 and e.event_type = 'onboarding.step_completed'
+                 and e.payload->>'stepCode' = os.code
+             )
+         ), 0) as completed_step_count,
          (select count(*) from tandem.onboarding_steps os where os.workspace_id = a.workspace_id and os.required) as required_step_count,
          (select count(*) from tandem.leads l where l.workspace_id = a.workspace_id and l.assignee_id = a.id
             and l.pipeline_status not in ('Commission_Paid', 'Lost', 'Refunded')) as open_lead_count
        from tandem.agents a
        left join tandem.agent_onboarding_status s on s.workspace_id = a.workspace_id and s.agent_id = a.id
-       left join lateral (
-         select array_agg(distinct (payload->>'stepCode')) as completed
-         from tandem.agent_events e
-         where e.workspace_id = a.workspace_id and e.agent_id = a.id and e.event_type = 'onboarding.step_completed'
-       ) cs on true
        where a.workspace_id = $1
        order by a.display_name`,
       [WORKSPACE_ID]
@@ -119,6 +132,77 @@ export async function getOnboardingSteps(userId: string): Promise<OnboardingStep
     )
   );
   return result.rows.map((row) => ({ code: row.code, label: row.label, required: row.required, sortOrder: row.sort_order }));
+}
+
+export type TerritorySummary = { id: string; name: string; code: string; active: boolean; agentCount: number };
+
+export async function getTerritories(userId: string): Promise<TerritorySummary[]> {
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; name: string; code: string; active: boolean; agent_count: string;
+    }>(
+      `select t.id, t.name, t.code, t.active,
+              count(at.agent_id) as agent_count
+       from tandem.territories t
+       left join tandem.agent_territories at
+         on at.workspace_id = t.workspace_id and at.territory_id = t.id
+       where t.workspace_id = $1
+       group by t.id, t.name, t.code, t.active
+       order by t.name`,
+      [WORKSPACE_ID]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id, name: row.name, code: row.code, active: row.active,
+    agentCount: Number(row.agent_count),
+  }));
+}
+
+export async function getAgentTerritoryIds(userId: string, agentId: string): Promise<string[]> {
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ territory_id: string }>(
+      `select territory_id from tandem.agent_territories
+       where workspace_id = $1 and agent_id = $2 order by territory_id`,
+      [WORKSPACE_ID, agentId]
+    )
+  );
+  return result.rows.map((row) => row.territory_id);
+}
+
+export type CommissionRule = {
+  id: string;
+  productTag: string;
+  currency: string;
+  basisPoints: number;
+  holdDays: number;
+  active: boolean;
+};
+
+/** Commission policy is ordinary workspace configuration. The host's lead
+ * adapter decides when to use it to create a commission. Keeping that choice
+ * outside the read model prevents a new rule from silently rewriting money
+ * that is already represented by immutable lead events. */
+export async function getCommissionRules(userId: string): Promise<CommissionRule[]> {
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; product_tag: string; currency: string; basis_points: number;
+      hold_days: number; active: boolean;
+    }>(
+      `select id, product_tag, currency, basis_points, hold_days, active
+       from tandem.commission_rules
+       where workspace_id = $1
+       order by product_tag, currency`,
+      [WORKSPACE_ID]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    productTag: row.product_tag,
+    currency: row.currency,
+    basisPoints: Number(row.basis_points),
+    holdDays: Number(row.hold_days),
+    active: row.active,
+  }));
 }
 
 export type AgentDetail = {

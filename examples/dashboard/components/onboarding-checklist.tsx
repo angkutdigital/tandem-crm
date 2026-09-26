@@ -14,12 +14,14 @@ export function OnboardingChecklist({
   completedStepCodes,
   startedAt,
   certifiedAt,
+  certificationCurrent,
 }: {
   agentId: string;
   steps: OnboardingStep[];
   completedStepCodes: string[];
   startedAt: string | null;
   certifiedAt: string | null;
+  certificationCurrent: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const completed = new Set(completedStepCodes);
@@ -39,13 +41,25 @@ export function OnboardingChecklist({
     });
   }
 
-  if (certifiedAt) {
+  if (certifiedAt && certificationCurrent) {
     return (
       <div className="flex flex-col items-center gap-2 py-8 text-center">
         <CheckCircle2 className="size-8 text-primary" />
         <p className="text-sm font-medium">You are certified</p>
         <p className="text-xs text-muted-foreground">
           Certified on {new Date(certifiedAt).toLocaleDateString()}
+        </p>
+      </div>
+    );
+  }
+
+  if (certifiedAt) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-8 text-center">
+        <Circle className="size-8 text-muted-foreground" />
+        <p className="text-sm font-medium">Certification needs review</p>
+        <p className="text-xs text-muted-foreground">
+          Your workspace added a required step. An owner or admin must reopen certification before you can complete it.
         </p>
       </div>
     );

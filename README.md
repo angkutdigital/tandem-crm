@@ -100,7 +100,7 @@ The Supabase implementation lives outside the package at `src/lib/supabase/tande
 
 Ramp tracks whether a sales agent/partner has completed a workspace-defined checklist of onboarding steps and is certified. Scope is deliberately narrow: no content authoring, no LMS, no quizzes, just step tracking and a certification state. Tandem never enforces what certification gates (a territory assignment, a commission rule, anything else); that decision belongs to the implementing application, the same way Core tracks business state without enforcing business policy.
 
-Onboarding events live in their own append-only log, `tandem.agent_events`, rather than `tandem.events`: events there require a `lead_id`, and onboarding events are scoped to an agent, not a lead. `replayAgentOnboardingEvents()` rebuilds one agent's state the same way `replayLeadEvents()` does; `isAgentCertified(state, requiredStepCodes)` checks both `certifiedAt` and that every currently-required step is actually in the completed list, so the answer stays correct even if a workspace adds a new required step after an agent was certified under the old list.
+Onboarding events live in their own append-only log, `tandem.agent_events`, rather than `tandem.events`: events there require a `lead_id`, and onboarding events are scoped to an agent, not a lead. `replayAgentOnboardingEvents()` rebuilds one agent's state the same way `replayLeadEvents()` does; `isAgentCertified(state, requiredStepCodes)` checks both `certifiedAt` and that every currently-required step is actually in the completed list, so the answer stays correct even if a workspace adds a new required step after an agent was certified under the old list. In that case an owner/admin appends `onboarding.reopened`; it preserves the earlier certification fact, lets the agent complete the new requirement, and permits a fresh certification without deleting audit history.
 
 ## Lead routing
 
@@ -116,7 +116,7 @@ The one place Coaster changes Core's own behavior: `release_due_commissions()` n
 
 ## Open items
 
-- The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers cross-tenant isolation for members and leads. It does not yet cover Ramp, routing, or Coaster's tables, or the write side (an agent inserting/updating a row that isn't theirs).
+- The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers Core read/write boundaries, Ramp's template/progress/recertification boundary, Routing configuration, Coaster dispute visibility/resolution, and Trail activity writes. It uses a disposable real Postgres database, not mocks.
 - No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only.
 - Coaster records a dispute's outcome but does not execute it: no automatic replacement commission, amount adjustment, or clawback of an already-paid commission yet. Also missing: admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.

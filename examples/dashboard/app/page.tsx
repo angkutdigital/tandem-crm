@@ -18,6 +18,7 @@ import {
   getOnboardingSteps,
   getPendingPayoutsSummary,
   getPipelineCounts,
+  isAgentCurrentlyCertified,
   requireCurrentMember,
   type AgentSummary,
 } from "@/lib/queries";
@@ -88,7 +89,8 @@ function StatTile({
 }
 
 function AgentStatusBadge({ agent }: { agent: AgentSummary }) {
-  if (agent.certifiedAt) return <Badge>Certified</Badge>;
+  if (isAgentCurrentlyCertified(agent)) return <Badge>Certified</Badge>;
+  if (agent.certifiedAt) return <Badge variant="destructive">Needs review</Badge>;
   if (agent.startedAt) return <Badge variant="secondary">In progress</Badge>;
   return <Badge variant="outline">Not started</Badge>;
 }
@@ -125,12 +127,15 @@ export default async function OverviewPage() {
     0
   );
 
-  const certifiedAgents = agents?.filter((agent) => agent.certifiedAt != null).length ?? 0;
+  const certifiedAgents = agents?.filter(isAgentCurrentlyCertified).length ?? 0;
   const [onboardingSteps, myAgentDetail] = myOnboarding ?? [[], null];
   const myRequiredSteps = onboardingSteps.filter((step) => step.required);
   const myCompletedRequired = myAgentDetail
     ? myRequiredSteps.filter((step) => myAgentDetail.completedStepCodes.includes(step.code)).length
     : 0;
+  const myCertificationCurrent = myAgentDetail !== null
+    && myAgentDetail.certifiedAt !== null
+    && myCompletedRequired === myRequiredSteps.length;
 
   const peakPipelineCount = Math.max(
     1,
@@ -182,12 +187,12 @@ export default async function OverviewPage() {
             icon={ListChecks}
             label="Your onboarding"
             value={
-              myAgentDetail?.certifiedAt
+              myCertificationCurrent
                 ? "Certified"
                 : `${myCompletedRequired} / ${myRequiredSteps.length}`
             }
             hint={
-              myAgentDetail?.certifiedAt
+              myCertificationCurrent
                 ? "All required steps complete"
                 : "Required steps completed"
             }
@@ -296,6 +301,7 @@ export default async function OverviewPage() {
                   completedStepCodes={myAgentDetail.completedStepCodes}
                   startedAt={myAgentDetail.startedAt}
                   certifiedAt={myAgentDetail.certifiedAt}
+                  certificationCurrent={myCertificationCurrent}
                 />
               ) : (
                 <p className="py-6 text-center text-sm text-muted-foreground">
