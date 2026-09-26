@@ -103,6 +103,42 @@ and unset env vars" is not the same as "reproduce what the actual CI
 install step does." Test the actual install scope, not an approximation
 of it, before calling a deploy fix verified.
 
+**Second correction, same evening, one deploy attempt later:** still not
+enough. `npm install --prefix ../..` ran, but under `NODE_ENV=production`
+(confirmed empirically -- a plain `npm install` here installs ~40% fewer
+packages under `NODE_ENV=production` than without it: this npm version
+does still omit devDependencies for that env var, contrary to my own
+assumption that this legacy behavior had been removed from modern npm).
+Vercel's real build log showed its own outer install (for
+`examples/dashboard` itself) clearly *does* include devDependencies
+(eslint present, 672 packages) -- so `NODE_ENV=production` is evidently
+not in effect for Vercel's separate "Installing dependencies" step, only
+for the subsequent "Running npm run build" step, where my nested
+`npm install --prefix ../..` actually executes. `tandem-crm`'s own build
+needs `@types/pg` (a devDependency) to typecheck `pg` usage, and it was
+silently getting skipped. Fixed with `--include=dev` on that nested
+install. Verified this time by actually reproducing the differential:
+confirmed the package-count difference with and without `NODE_ENV=production`
+first, then ran the exact real sequence end to end -- `examples/dashboard`'s
+own plain `npm install` (no forced env, matching Vercel's real outer
+step), then `NODE_ENV=production npm run build` for everything downstream
+(matching Vercel's real build-step environment), with `.next` and every
+`node_modules`/`dist` wiped first, with and without env vars present.
+(A `@tailwindcss/postcss` resolution error surfaced once during this
+round too -- traced to a stale local `.next` cache from iterating on the
+previous attempt, not a real bug; clearing `.next` before the same build
+made it vanish. Vercel never has a preexisting `.next`, so this specific
+one was always a local-only red herring, but worth naming so it doesn't
+cost someone else the same hour.)
+
+Two corrections to the same claim in one evening is itself the finding:
+this monorepo's actual dependency-install shape (three separate
+`node_modules` trees, one of them behind a script-invoked nested `npm
+install` that inherits the parent process's env in ways that aren't
+obvious from reading the script) is more fragile than it looks, and
+"I tested it" needs a precise definition of *what* was tested every time,
+not a general assurance.
+
 The one genuinely Vercel-specific piece of this whole deploy is the
 "Include source files outside of the Root Directory" toggle -- any other
 provider will have its own equivalent setting for a monorepo whose app
