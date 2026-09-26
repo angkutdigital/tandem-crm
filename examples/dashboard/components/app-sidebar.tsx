@@ -32,7 +32,7 @@ export async function AppSidebar() {
                 <span className="truncate text-sm font-semibold tracking-tight">
                   Camp
                 </span>
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="truncate font-mono text-xs text-muted-foreground">
                   by TandemCRM
                 </span>
               </div>

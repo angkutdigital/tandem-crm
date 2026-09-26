@@ -56,6 +56,28 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const salesStageVariantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  New: "outline",
+  Contacted: "outline",
+  Qualified: "secondary",
+  Negotiating: "secondary",
+  Closed_Won: "default",
+  Closed_Lost: "destructive",
+};
+
+/** Sales stage (New -> ... -> Closed_Won/Closed_Lost) is a separate axis
+ * from pipelineStatus (the commission pipeline): a lead can be
+ * Commission_Paid while its sales stage still shows Closed_Won from
+ * whenever the deal closed, or Negotiating while nothing commission-side
+ * has happened yet. Shown as its own badge, not folded into StatusBadge. */
+function SalesStageBadge({ salesStage }: { salesStage: string }) {
+  return (
+    <Badge variant={salesStageVariantMap[salesStage] ?? "outline"}>
+      {humanizeStatus(salesStage)}
+    </Badge>
+  );
+}
+
 function ViewToggle({ activeView }: { activeView: "list" | "kanban" }) {
   const linkClass = (view: "list" | "kanban") =>
     cn(
@@ -87,6 +109,9 @@ function LeadRow({ lead }: { lead: LeadSummary }) {
       </TableCell>
       <TableCell>
         <StatusBadge status={lead.pipelineStatus} />
+      </TableCell>
+      <TableCell>
+        <SalesStageBadge salesStage={lead.salesStage} />
       </TableCell>
       <TableCell>{lead.assigneeName ?? "Unassigned"}</TableCell>
       <TableCell className="tabular-nums">{lead.qualificationMetric}</TableCell>
@@ -172,6 +197,7 @@ function LeadsList({
               <TableRow>
                 <TableHead>Company</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Sales stage</TableHead>
                 <TableHead>Assignee</TableHead>
                 <TableHead>Qualification metric</TableHead>
                 <TableHead>Updated</TableHead>

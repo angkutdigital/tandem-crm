@@ -26,6 +26,18 @@ const statusVariantMap: Record<string, "default" | "secondary" | "outline" | "de
   Refunded: "destructive",
 };
 
+/** Sales stage is a separate axis from pipelineStatus -- see domain.ts's
+ * leadSalesStages. Its own variant map, not shared with statusVariantMap,
+ * since the two enums don't line up value-for-value. */
+const salesStageVariantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  New: "outline",
+  Contacted: "outline",
+  Qualified: "secondary",
+  Negotiating: "secondary",
+  Closed_Won: "default",
+  Closed_Lost: "destructive",
+};
+
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString("en-US", {
     year: "numeric",
@@ -75,6 +87,9 @@ export default async function LeadDetailPage(props: PageProps<"/leads/[id]">) {
           <Badge variant={statusVariantMap[lead.pipelineStatus] ?? "outline"}>
             {humanizeStatus(lead.pipelineStatus)}
           </Badge>
+          <Badge variant={salesStageVariantMap[lead.salesStage] ?? "outline"}>
+            {humanizeStatus(lead.salesStage)}
+          </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
           Last updated {formatDate(lead.updatedAt)}
@@ -109,6 +124,16 @@ export default async function LeadDetailPage(props: PageProps<"/leads/[id]">) {
             </CardDescription>
             <CardTitle className="text-lg font-semibold">
               {humanizeStatus(lead.pipelineStatus)}
+            </CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="text-xs font-medium tracking-wide uppercase">
+              Sales stage
+            </CardDescription>
+            <CardTitle className="text-lg font-semibold">
+              {humanizeStatus(lead.salesStage)}
             </CardTitle>
           </CardHeader>
         </Card>

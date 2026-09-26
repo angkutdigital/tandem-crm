@@ -61,3 +61,26 @@ function instead of adding an auth vendor to Tandem:
 The default (no `TANDEM_AUTH_MODE`) remains the seed-data demo mode. Host
 mode fails closed until the resolver is wired, preventing a deployment from
 silently running as the demo owner.
+
+## Paying a commission (Stripe Connect reference adapter)
+
+The Payouts page's "Pay via Stripe" button (owner/admin only, shown once a
+payout is `approved`) executes `lib/stripePayoutAdapter.ts`, a reference
+`TandemPayoutAdapter` implementation -- see the root README's "Adapter
+pattern (vendor-neutral payouts)" section for the interface itself. It
+requires two environment variables:
+
+```sh
+STRIPE_SECRET_KEY='sk_test_...'
+STRIPE_CONNECTED_ACCOUNTS='{"borneo-freight":"acct_..."}'
+```
+
+`STRIPE_CONNECTED_ACCOUNTS` is a flat JSON map from `partnerId` (as it
+appears on the lead) to a Stripe Connect account id, good enough for local
+development. A real deployment should resolve this from its own partners
+table instead of a flat env var -- the adapter's
+`resolveConnectedAccountId` callback is exactly the seam for that; nothing
+else in `stripePayoutAdapter.ts` needs to change. Without `STRIPE_SECRET_KEY`
+set, "Pay via Stripe" fails closed with a clear configuration error instead
+of silently no-op'ing; the payout stays `approved`, safe to retry once
+configured.

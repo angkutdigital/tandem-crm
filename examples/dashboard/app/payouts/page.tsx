@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ApprovePayoutButton, PayPayoutButton } from "@/components/payout-actions";
 import { getPayouts, requireCurrentMember, type PayoutSummary } from "@/lib/queries";
 
 function formatCurrency(amountMinor: number, currency: string) {
@@ -32,6 +33,7 @@ function formatStatus(status: PayoutSummary["status"]) {
 
 export default async function PayoutsPage() {
   const member = await requireCurrentMember();
+  const isManager = member.role === "owner" || member.role === "admin";
   const payouts = await getPayouts(member.userId);
 
   const pendingPayouts = payouts.filter(
@@ -79,6 +81,7 @@ export default async function PayoutsPage() {
                   <TableHead>Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Release date</TableHead>
+                  {isManager ? <TableHead>Actions</TableHead> : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -92,6 +95,22 @@ export default async function PayoutsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>{formatReleaseDate(payout.releaseAt)}</TableCell>
+                    {isManager ? (
+                      <TableCell>
+                        {payout.status === "eligible" ? (
+                          <ApprovePayoutButton leadId={payout.leadId} payoutId={payout.id} />
+                        ) : null}
+                        {payout.status === "approved" ? (
+                          <PayPayoutButton
+                            leadId={payout.leadId}
+                            payoutId={payout.id}
+                            partnerId={payout.partnerId}
+                            amountMinor={payout.amountMinor}
+                            currency={payout.currency}
+                          />
+                        ) : null}
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>

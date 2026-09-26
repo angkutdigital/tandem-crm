@@ -16,11 +16,13 @@ import {
   type TrailEvent,
   type TrailVisitChannel,
   type TrailSalesStage,
+  type TandemPayoutAdapter,
 } from "tandem-crm";
 import { withTandemSession } from "tandem-crm/db";
 import { pool, WORKSPACE_ID } from "./db";
 import { setDemoUser } from "./auth";
 import { requireCurrentMember, getOnboardingSteps, getWaypointStrategy } from "./queries";
+import { createStripePayoutAdapter } from "./stripePayoutAdapter";
 
 async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): Promise<TandemEvent[]> {
   const result = await client.query<{
@@ -48,7 +50,49 @@ async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): 
  * full history (existing + new) through the same reducer the package
  * ships, then writes the event and the resulting projection row in one
  * transaction -- the "validate and append in one transaction" contract the
- * README describes for a projection writer. */
+ * README describes for a projection writer. Takes an already-open client so
+ * callers that need to append more than one lead event atomically (e.g.
+ * logTrailVisit appending lead.stage_changed alongside its own trail event)
+ * can share a single transaction instead of racing two separate ones. */
+async function appendLeadEventWithClient(
+  client: import("pg").PoolClient,
+  leadId: string,
+  type: TandemEvent["type"],
+  data: TandemEvent["data"],
+  idempotency?: { source: string; sourceEventId: string }
+): Promise<{ state: NonNullable<ReturnType<typeof replayLeadEvents>>; event: TandemEvent }> {
+  const existing = await loadLeadEvents(client, leadId);
+  const nextSequence = existing.length > 0 ? existing[existing.length - 1].sequence + 1 : 1;
+  const newEvent = {
+    id: randomUUID(), sequence: nextSequence, workspaceId: WORKSPACE_ID, leadId,
+    source: idempotency?.source ?? "dashboard",
+    sourceEventId: idempotency?.sourceEventId ?? `dashboard-${randomUUID()}`,
+    occurredAt: new Date().toISOString(),
+    type, data,
+  } as TandemEvent;
+
+  // Throws on an illegal transition -- this IS the validation, not a
+  // separate check, so it can't drift from what the reducer actually
+  // enforces everywhere else.
+  const state = replayLeadEvents([...existing, newEvent], WORKSPACE_ID, leadId);
+  if (!state) throw new Error("lead has no state after append");
+
+  await client.query(
+    `insert into tandem.events
+       (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+     values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
+    [newEvent.id, WORKSPACE_ID, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+  );
+  await client.query(
+    `update tandem.leads
+     set pipeline_status = $2, sales_stage = $3, assignee_id = coalesce($4, assignee_id), territory_id = coalesce($5, territory_id),
+         last_event_sequence = $6, updated_at = now()
+     where id = $1 and workspace_id = $7`,
+    [leadId, state.status, state.salesStage, state.agentId, state.territoryId, state.lastSequence, WORKSPACE_ID]
+  );
+  return { state, event: newEvent };
+}
+
 async function appendLeadEvent(
   leadId: string,
   type: TandemEvent["type"],
@@ -57,35 +101,7 @@ async function appendLeadEvent(
 ): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, async (client) => {
-    const existing = await loadLeadEvents(client, leadId);
-    const nextSequence = existing.length > 0 ? existing[existing.length - 1].sequence + 1 : 1;
-    const newEvent = {
-      id: randomUUID(), sequence: nextSequence, workspaceId: WORKSPACE_ID, leadId,
-      source: idempotency?.source ?? "dashboard",
-      sourceEventId: idempotency?.sourceEventId ?? `dashboard-${randomUUID()}`,
-      occurredAt: new Date().toISOString(),
-      type, data,
-    } as TandemEvent;
-
-    // Throws on an illegal transition -- this IS the validation, not a
-    // separate check, so it can't drift from what the reducer actually
-    // enforces everywhere else.
-    const state = replayLeadEvents([...existing, newEvent], WORKSPACE_ID, leadId);
-    if (!state) throw new Error("lead has no state after append");
-
-    await client.query(
-      `insert into tandem.events
-         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
-       values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
-      [newEvent.id, WORKSPACE_ID, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
-    );
-    await client.query(
-      `update tandem.leads
-       set pipeline_status = $2, assignee_id = coalesce($3, assignee_id), territory_id = coalesce($4, territory_id),
-           last_event_sequence = $5, updated_at = now()
-       where id = $1 and workspace_id = $6`,
-      [leadId, state.status, state.agentId, state.territoryId, state.lastSequence, WORKSPACE_ID]
-    );
+    const { state, event: newEvent } = await appendLeadEventWithClient(client, leadId, type, data, idempotency);
 
     if (state.commission && type === "commission.held") {
       await client.query(
@@ -183,6 +199,51 @@ export async function moveLeadStatus(leadId: string, targetStatus: string): Prom
     return;
   }
   throw new Error(`"${targetStatus.replace(/_/g, " ")}" isn't a status you can drag a lead into -- it needs data a drag can't supply.`);
+}
+
+/** Reference wiring of TandemPayoutAdapter for local development only: a
+ * flat env var mapping partnerId -> Stripe connected account id. A real
+ * deployment would resolve this from its own partners table instead --
+ * see stripePayoutAdapter.ts's own comment. Throws with a clear setup
+ * error rather than silently no-op'ing, the same fail-closed convention
+ * TANDEM_AUTH_MODE=host's getHostUserId() uses. */
+function getConfiguredPayoutAdapter(): TandemPayoutAdapter {
+  const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeSecretKey) {
+    throw new Error("STRIPE_SECRET_KEY is not configured; paying a commission requires a payout adapter.");
+  }
+  let connectedAccounts: Record<string, string>;
+  try {
+    connectedAccounts = JSON.parse(process.env.STRIPE_CONNECTED_ACCOUNTS ?? "{}");
+  } catch {
+    throw new Error("STRIPE_CONNECTED_ACCOUNTS must be valid JSON mapping partnerId to a Stripe connected account id.");
+  }
+  return createStripePayoutAdapter({
+    stripeSecretKey,
+    resolveConnectedAccountId: async (partnerId) => connectedAccounts[partnerId] ?? "",
+  });
+}
+
+export async function approveCommission(leadId: string, payoutId: string): Promise<void> {
+  await appendLeadEvent(leadId, "commission.approved", { payoutId });
+}
+
+/** Executes the real transfer through whatever TandemPayoutAdapter is
+ * configured, then records commission.paid with the reference it returns.
+ * Deliberately two separate steps, not one transaction spanning the
+ * network call: if the transfer throws, nothing is appended and the payout
+ * stays "approved" -- exactly the retryable state it needs to be in for
+ * the adapter's own idempotency key to do its job on the next attempt. */
+export async function payCommission(
+  leadId: string,
+  payoutId: string,
+  partnerId: string,
+  amountMinor: number,
+  currency: string
+): Promise<void> {
+  const adapter = getConfiguredPayoutAdapter();
+  const { payoutReference } = await adapter.executePayout({ payoutId, partnerId, amountMinor, currency });
+  await appendLeadEvent(leadId, "commission.paid", { payoutId, payoutReference });
 }
 
 /** Assigns a lead to a specific agent directly (from the lead detail page's
@@ -717,8 +778,20 @@ export async function logTrailVisit(leadId: string, input: TrailInput): Promise<
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [entryId, WORKSPACE_ID, leadId, state.channel, state.confidenceRating, state.salesStage, state.note, state.loggedAt, state.lastSequence]
     );
+    await syncLeadSalesStage(client, leadId, state.salesStage);
   });
   revalidatePath(`/leads/${leadId}`);
+}
+
+/** Keeps the lead's own promoted sales stage (queryable, drives the funnel
+ * view) in sync with whatever an agent just logged in Trail, in the same
+ * transaction as the trail write. A no-op append is skipped rather than
+ * growing the Core event log with an event that changes nothing. */
+async function syncLeadSalesStage(client: import("pg").PoolClient, leadId: string, salesStage: TrailSalesStage): Promise<void> {
+  const leadEvents = await loadLeadEvents(client, leadId);
+  const leadState = replayLeadEvents(leadEvents, WORKSPACE_ID, leadId);
+  if (!leadState || leadState.salesStage === salesStage) return;
+  await appendLeadEventWithClient(client, leadId, "lead.stage_changed", { salesStage });
 }
 
 async function appendTrailEvent(
@@ -753,6 +826,7 @@ async function appendTrailEvent(
        where id = $1 and workspace_id = $9 and lead_id = $10`,
       [entryId, state.channel, state.confidenceRating, state.salesStage, state.note, state.correctedAt, state.retracted, state.lastSequence, WORKSPACE_ID, leadId]
     );
+    if (!state.retracted) await syncLeadSalesStage(client, leadId, state.salesStage);
   });
   revalidatePath(`/leads/${leadId}`);
 }

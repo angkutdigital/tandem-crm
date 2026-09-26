@@ -4,144 +4,136 @@ import { createTandemPool } from "tandem-crm/db";
 import { replayLeadEvents } from "tandem-crm";
 import { replayAgentOnboardingEvents } from "tandem-crm";
 
-// Elevated connection, not the app's restricted DATABASE_URL: seeding writes
-// directly to service-role-only tables (events, payouts) the way a real
-// projection writer would, which the app's own role can't do.
-const pool = createTandemPool(process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL);
-// A fresh workspace per seed is deliberate: Tandem's event logs are
-// append-only, so a seed script must never pretend it can erase a prior
-// workspace and start its history over. Pass an id to make the dashboard
-// point at a known demo tenant, or omit it and use the printed value.
-const WORKSPACE_ID = process.env.TANDEM_WORKSPACE_ID ?? randomUUID();
-
 const now = Date.now();
 const daysAgo = (n) => new Date(now - n * 86_400_000).toISOString();
 
-// Demo user ids stay fixed because the browser's identity switcher references
-// them. Tenant-owned ids are new for each workspace, so this seed can safely
-// create another demo workspace in the same database.
-const ids = {
-  territoryNorth: randomUUID(),
-  territorySouth: randomUUID(),
-  agentAmira: randomUUID(),
-  agentFarid: randomUUID(),
-  agentSiti: randomUUID(),
-  agentWei: randomUUID(),
-  userOwner: "c0000000-0000-0000-0000-000000000001",
-  userAmira: "c0000000-0000-0000-0000-000000000002",
-  userFarid: "c0000000-0000-0000-0000-000000000003",
-  userSiti: "c0000000-0000-0000-0000-000000000004",
-  userWei: "c0000000-0000-0000-0000-000000000005",
+// Demo user ids stay fixed because the browser's identity switcher
+// (components/user-switcher.tsx) references them directly. Exported so a
+// live-demo reset job (bin/reset-demo-workspace.mjs) can reseed the exact
+// same fixed personas the switcher expects, not just a fresh random set.
+export const DEMO_USER_IDS = {
+  owner: "c0000000-0000-0000-0000-000000000001",
+  amira: "c0000000-0000-0000-0000-000000000002",
+  farid: "c0000000-0000-0000-0000-000000000003",
+  siti: "c0000000-0000-0000-0000-000000000004",
+  wei: "c0000000-0000-0000-0000-000000000005",
 };
 
-let eventCounter = 0;
-function nextSourceEventId() {
-  eventCounter += 1;
-  return `seed-${eventCounter}`;
-}
-
-function leadEvent(leadId, type, data, occurredAt) {
-  return {
-    id: randomUUID(),
-    sequence: 0, // placeholder; insertLead() assigns the real database sequence
-    workspaceId: WORKSPACE_ID,
-    leadId,
-    source: "seed",
-    sourceEventId: nextSourceEventId(),
-    occurredAt,
-    type,
-    data,
+/**
+ * Seeds one full demo workspace: two territories, four agents (with a mix
+ * of onboarding progress), five members (one owner + four agents), and six
+ * leads spanning the whole pipeline (a fresh lead, one lost, one won with
+ * no payment yet, a held commission, a fully paid commission). Refuses to
+ * run if `workspaceId` already exists -- Tandem's event logs are
+ * append-only, so a seed can never pretend to erase and restart a prior
+ * workspace's history.
+ *
+ * @param {import("pg").Pool} pool
+ * @param {string} workspaceId
+ */
+export async function seedDemoWorkspace(pool, workspaceId) {
+  const WORKSPACE_ID = workspaceId;
+  const ids = {
+    territoryNorth: randomUUID(),
+    territorySouth: randomUUID(),
+    agentAmira: randomUUID(),
+    agentFarid: randomUUID(),
+    agentSiti: randomUUID(),
+    agentWei: randomUUID(),
+    userOwner: DEMO_USER_IDS.owner,
+    userAmira: DEMO_USER_IDS.amira,
+    userFarid: DEMO_USER_IDS.farid,
+    userSiti: DEMO_USER_IDS.siti,
+    userWei: DEMO_USER_IDS.wei,
   };
-}
 
-function onboardingEvent(agentId, type, data, occurredAt) {
-  return {
-    id: randomUUID(),
-    sequence: 0, // placeholder; insertAgentOnboarding() assigns the real database sequence
-    workspaceId: WORKSPACE_ID,
-    agentId,
-    source: "seed",
-    sourceEventId: nextSourceEventId(),
-    occurredAt,
-    type,
-    data,
-  };
-}
-
-/** Inserts a lead's full event history, replays it locally to build the
- * projection row (so the projection can never drift from what the events
- * actually say), then writes both. */
-async function insertLead(client, { id, companyName, qualificationMetric, assigneeId, territoryId, events }) {
-  let sequence = 1;
-  for (const e of events) {
-    await client.query(
-      `insert into tandem.events
-         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
-       values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
-      [e.id, WORKSPACE_ID, id, e.source, e.sourceEventId, e.type, JSON.stringify(e.data), e.occurredAt]
-    );
-    e.sequence = sequence++;
+  let eventCounter = 0;
+  function nextSourceEventId() {
+    eventCounter += 1;
+    return `seed-${eventCounter}`;
   }
-  const state = replayLeadEvents(events, WORKSPACE_ID, id);
-  await client.query(
-    `insert into tandem.leads
-       (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id, territory_id, last_event_sequence)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, WORKSPACE_ID, companyName, qualificationMetric, state.status, assigneeId, territoryId, state.lastSequence]
-  );
-  if (state.commission) {
+
+  function leadEvent(leadId, type, data, occurredAt) {
+    return {
+      id: randomUUID(), sequence: 0, workspaceId: WORKSPACE_ID, leadId,
+      source: "seed", sourceEventId: nextSourceEventId(), occurredAt, type, data,
+    };
+  }
+
+  function onboardingEvent(agentId, type, data, occurredAt) {
+    return {
+      id: randomUUID(), sequence: 0, workspaceId: WORKSPACE_ID, agentId,
+      source: "seed", sourceEventId: nextSourceEventId(), occurredAt, type, data,
+    };
+  }
+
+  /** Inserts a lead's full event history, replays it locally to build the
+   * projection row (so the projection can never drift from what the events
+   * actually say), then writes both. */
+  async function insertLead(client, { id, companyName, qualificationMetric, assigneeId, territoryId, events }) {
+    let sequence = 1;
+    for (const e of events) {
+      await client.query(
+        `insert into tandem.events
+           (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+         values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
+        [e.id, WORKSPACE_ID, id, e.source, e.sourceEventId, e.type, JSON.stringify(e.data), e.occurredAt]
+      );
+      e.sequence = sequence++;
+    }
+    const state = replayLeadEvents(events, WORKSPACE_ID, id);
     await client.query(
-      `insert into tandem.payouts
-         (id, workspace_id, lead_id, partner_id, amount_minor, currency, hold_days, payment_confirmed_at, release_at, status, last_event_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [
-        state.commission.payoutId, WORKSPACE_ID, id, state.commission.partnerId,
-        state.commission.amountMinor, state.commission.currency, 30,
-        state.payment.confirmedAt, state.commission.releaseAt, state.commission.status,
-        events[events.length - 1].id,
-      ]
+      `insert into tandem.leads
+         (id, workspace_id, company_name, qualification_metric, pipeline_status, sales_stage, assignee_id, territory_id, last_event_sequence)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, WORKSPACE_ID, companyName, qualificationMetric, state.status, state.salesStage, assigneeId, territoryId, state.lastSequence]
+    );
+    if (state.commission) {
+      await client.query(
+        `insert into tandem.payouts
+           (id, workspace_id, lead_id, partner_id, amount_minor, currency, hold_days, payment_confirmed_at, release_at, status, last_event_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          state.commission.payoutId, WORKSPACE_ID, id, state.commission.partnerId,
+          state.commission.amountMinor, state.commission.currency, 30,
+          state.payment.confirmedAt, state.commission.releaseAt, state.commission.status,
+          events[events.length - 1].id,
+        ]
+      );
+    }
+  }
+
+  async function insertAgentOnboarding(client, agentId, events) {
+    let sequence = 1;
+    for (const e of events) {
+      await client.query(
+        `insert into tandem.agent_events
+           (id, workspace_id, agent_id, source, source_event_id, event_type, payload, occurred_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [e.id, WORKSPACE_ID, agentId, e.source, e.sourceEventId, e.type, JSON.stringify(e.data), e.occurredAt]
+      );
+      e.sequence = sequence++;
+    }
+    const state = events.length > 0 ? replayAgentOnboardingEvents(events, WORKSPACE_ID, agentId) : null;
+    await client.query(
+      `insert into tandem.agent_onboarding_status (workspace_id, agent_id, started_at, certified_at, last_event_sequence)
+       values ($1, $2, $3, $4, $5)`,
+      [WORKSPACE_ID, agentId, state?.startedAt ?? null, state?.certifiedAt ?? null, state?.lastSequence ?? null]
     );
   }
-}
 
-async function insertAgentOnboarding(client, agentId, events) {
-  let sequence = 1;
-  for (const e of events) {
-    await client.query(
-      `insert into tandem.agent_events
-         (id, workspace_id, agent_id, source, source_event_id, event_type, payload, occurred_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [e.id, WORKSPACE_ID, agentId, e.source, e.sourceEventId, e.type, JSON.stringify(e.data), e.occurredAt]
-    );
-    e.sequence = sequence++;
-  }
-  const state = events.length > 0 ? replayAgentOnboardingEvents(events, WORKSPACE_ID, agentId) : null;
-  await client.query(
-    `insert into tandem.agent_onboarding_status (workspace_id, agent_id, started_at, certified_at, last_event_sequence)
-     values ($1, $2, $3, $4, $5)`,
-    [WORKSPACE_ID, agentId, state?.startedAt ?? null, state?.certifiedAt ?? null, state?.lastSequence ?? null]
-  );
-}
-
-async function main() {
   const client = await pool.connect();
   try {
     await client.query("begin");
 
-    const existing = await client.query(
-      "select 1 from tandem.workspaces where id = $1",
-      [WORKSPACE_ID]
-    );
+    const existing = await client.query("select 1 from tandem.workspaces where id = $1", [WORKSPACE_ID]);
     if ((existing.rowCount ?? 0) > 0) {
       throw new Error(
-        `demo workspace ${WORKSPACE_ID} already exists; choose a new TANDEM_WORKSPACE_ID instead of deleting append-only history`
+        `demo workspace ${WORKSPACE_ID} already exists; choose a new workspace id instead of deleting append-only history`
       );
     }
 
-    await client.query(
-      "insert into tandem.workspaces (id, slug) values ($1, $2)",
-      [WORKSPACE_ID, `demo-${WORKSPACE_ID}`]
-    );
+    await client.query("insert into tandem.workspaces (id, slug) values ($1, $2)", [WORKSPACE_ID, `demo-${WORKSPACE_ID}`]);
 
     await client.query(
       `insert into tandem.territories (id, workspace_id, name, code) values
@@ -298,18 +290,29 @@ async function main() {
     });
 
     await client.query("commit");
-    console.log("Seeded workspace", WORKSPACE_ID);
-    console.log(`Start the dashboard with TANDEM_WORKSPACE_ID=${WORKSPACE_ID}`);
   } catch (error) {
     await client.query("rollback");
     throw error;
   } finally {
     client.release();
-    await pool.end();
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+// CLI wrapper, unchanged behavior from before this file was refactored into
+// an exported function: `node scripts/seed.mjs` still works exactly as
+// documented in the README, reading SEED_DATABASE_URL/DATABASE_URL and an
+// optional TANDEM_WORKSPACE_ID from the environment.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const pool = createTandemPool(process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL);
+  const workspaceId = process.env.TANDEM_WORKSPACE_ID ?? randomUUID();
+  seedDemoWorkspace(pool, workspaceId)
+    .then(() => {
+      console.log("Seeded workspace", workspaceId);
+      console.log(`Start the dashboard with TANDEM_WORKSPACE_ID=${workspaceId}`);
+    })
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    })
+    .finally(() => pool.end());
+}

@@ -262,6 +262,7 @@ export type LeadSummary = {
   companyName: string;
   qualificationMetric: number;
   pipelineStatus: string;
+  salesStage: string;
   assigneeId: string | null;
   assigneeName: string | null;
   updatedAt: string;
@@ -270,10 +271,10 @@ export type LeadSummary = {
 export async function getLeads(userId: string): Promise<LeadSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
-      id: string; company_name: string; qualification_metric: number; pipeline_status: string;
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
       assignee_id: string | null; assignee_name: string | null; updated_at: string;
     }>(
-      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
               a.display_name as assignee_name, l.updated_at
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
@@ -284,7 +285,7 @@ export async function getLeads(userId: string): Promise<LeadSummary[]> {
   );
   return result.rows.map((row) => ({
     id: row.id, companyName: row.company_name, qualificationMetric: row.qualification_metric,
-    pipelineStatus: row.pipeline_status, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
+    pipelineStatus: row.pipeline_status, salesStage: row.sales_stage, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
     updatedAt: toISO(row.updated_at),
   }));
 }
@@ -296,10 +297,10 @@ export type LeadDetail = LeadSummary & {
 export async function getLeadDetail(userId: string, leadId: string): Promise<LeadDetail | null> {
   return withTandemSession(pool, userId, async (client) => {
     const leadResult = await client.query<{
-      id: string; company_name: string; qualification_metric: number; pipeline_status: string;
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
       assignee_id: string | null; assignee_name: string | null; updated_at: string;
     }>(
-      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
               a.display_name as assignee_name, l.updated_at
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
@@ -317,7 +318,7 @@ export async function getLeadDetail(userId: string, leadId: string): Promise<Lea
 
     return {
       id: lead.id, companyName: lead.company_name, qualificationMetric: lead.qualification_metric,
-      pipelineStatus: lead.pipeline_status, assigneeId: lead.assignee_id, assigneeName: lead.assignee_name,
+      pipelineStatus: lead.pipeline_status, salesStage: lead.sales_stage, assigneeId: lead.assignee_id, assigneeName: lead.assignee_name,
       updatedAt: toISO(lead.updated_at),
       events: eventsResult.rows.map((r) => ({ id: r.id, type: r.event_type, payload: r.payload, occurredAt: toISO(r.occurred_at) })),
     };
@@ -327,10 +328,11 @@ export async function getLeadDetail(userId: string, leadId: string): Promise<Lea
 export type PayoutSummary = {
   id: string;
   leadId: string;
+  partnerId: string;
   companyName: string;
   amountMinor: number;
   currency: string;
-  status: string;
+  status: "held" | "eligible" | "approved" | "paid" | "voided";
   releaseAt: string;
   paidAt: string | null;
 };
@@ -338,10 +340,10 @@ export type PayoutSummary = {
 export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
-      id: string; lead_id: string; company_name: string; amount_minor: string;
-      currency: string; status: string; release_at: string; paid_at: string | null;
+      id: string; lead_id: string; partner_id: string; company_name: string; amount_minor: string;
+      currency: string; status: PayoutSummary["status"]; release_at: string; paid_at: string | null;
     }>(
-      `select p.id, p.lead_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at, p.paid_at
+      `select p.id, p.lead_id, p.partner_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at, p.paid_at
        from tandem.payouts p
        join tandem.leads l on l.id = p.lead_id and l.workspace_id = p.workspace_id
        where p.workspace_id = $1
@@ -350,7 +352,7 @@ export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
     )
   );
   return result.rows.map((row) => ({
-    id: row.id, leadId: row.lead_id, companyName: row.company_name,
+    id: row.id, leadId: row.lead_id, partnerId: row.partner_id, companyName: row.company_name,
     amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status,
     releaseAt: toISO(row.release_at), paidAt: row.paid_at ? toISO(row.paid_at) : null,
   }));
@@ -380,10 +382,10 @@ export async function getLeadsPage(userId: string, page: number, pageSize: numbe
   const offset = (safePage - 1) * pageSize;
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
-      id: string; company_name: string; qualification_metric: number; pipeline_status: string;
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
       assignee_id: string | null; assignee_name: string | null; updated_at: string; total_count: string;
     }>(
-      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
               a.display_name as assignee_name, l.updated_at, count(*) over () as total_count
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
@@ -396,7 +398,7 @@ export async function getLeadsPage(userId: string, page: number, pageSize: numbe
   return {
     leads: result.rows.map((row) => ({
       id: row.id, companyName: row.company_name, qualificationMetric: row.qualification_metric,
-      pipelineStatus: row.pipeline_status, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
+      pipelineStatus: row.pipeline_status, salesStage: row.sales_stage, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
       updatedAt: toISO(row.updated_at),
     })),
     total: result.rows.length > 0 ? Number(result.rows[0].total_count) : 0,
