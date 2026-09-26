@@ -30,7 +30,7 @@ export async function AppSidebar() {
               </div>
               <div className="grid flex-1 leading-tight">
                 <span className="truncate text-sm font-semibold tracking-tight">
-                  Nest
+                  Camp
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
                   by TandemCRM

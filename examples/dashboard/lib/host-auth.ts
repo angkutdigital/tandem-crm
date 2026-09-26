@@ -1,5 +1,5 @@
 /**
- * Nest's one intentional integration point for production identity.
+ * Camp's one intentional integration point for production identity.
  *
  * Replace this function with a server-side call to the host application's
  * existing auth system. Examples: Clerk's `auth().userId`, Supabase's

@@ -1,6 +1,6 @@
-import { getRoutingStrategy, requireCurrentMember } from "@/lib/queries";
+import { getWaypointStrategy, requireCurrentMember } from "@/lib/queries";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { RoutingStrategyForm } from "@/components/routing-strategy-form";
+import { WaypointStrategyForm } from "@/components/waypoint-strategy-form";
 
 export default async function RoutingSettingsPage() {
   const member = await requireCurrentMember();
@@ -20,7 +20,7 @@ export default async function RoutingSettingsPage() {
     );
   }
 
-  const strategy = await getRoutingStrategy(member.userId);
+  const strategy = await getWaypointStrategy(member.userId);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
@@ -36,7 +36,7 @@ export default async function RoutingSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <RoutingStrategyForm currentStrategy={strategy} />
+          <WaypointStrategyForm currentStrategy={strategy} />
         </CardContent>
       </Card>
     </div>

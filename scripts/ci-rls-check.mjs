@@ -483,14 +483,14 @@ async function main() {
   // strategy, but only an owner/admin may create or change it.
   const adminRoutingInsert = await withTandemSession(pool, userA, (client) =>
     client.query(
-      "insert into tandem.routing_settings (workspace_id, strategy) values ($1, 'round_robin')",
+      "insert into tandem.waypoint_settings (workspace_id, strategy) values ($1, 'round_robin')",
       [workspaceA]
     )
   );
   check("a workspace admin can set routing strategy", adminRoutingInsert.rowCount === 1);
 
   const agentRoutingRead = await withTandemSession(pool, agentUserA, (client) =>
-    client.query("select strategy from tandem.routing_settings where workspace_id = $1", [workspaceA])
+    client.query("select strategy from tandem.waypoint_settings where workspace_id = $1", [workspaceA])
   );
   check(
     "an agent can read their workspace routing strategy",
@@ -498,17 +498,17 @@ async function main() {
   );
 
   const agentRoutingUpdate = await withTandemSession(pool, agentUserA, (client) =>
-    client.query("update tandem.routing_settings set strategy = 'manual' where workspace_id = $1", [workspaceA])
+    client.query("update tandem.waypoint_settings set strategy = 'manual' where workspace_id = $1", [workspaceA])
   );
   check("an agent cannot change routing strategy", agentRoutingUpdate.rowCount === 0);
 
   const crossTenantRoutingRead = await withTandemSession(pool, userB, (client) =>
-    client.query("select strategy from tandem.routing_settings where workspace_id = $1", [workspaceA])
+    client.query("select strategy from tandem.waypoint_settings where workspace_id = $1", [workspaceA])
   );
   check("workspace B's owner cannot read workspace A's routing strategy", crossTenantRoutingRead.rows.length === 0);
 
   const adminRoutingUpdate = await withTandemSession(pool, userA, (client) =>
-    client.query("update tandem.routing_settings set strategy = 'least_loaded' where workspace_id = $1", [workspaceA])
+    client.query("update tandem.waypoint_settings set strategy = 'least_loaded' where workspace_id = $1", [workspaceA])
   );
   check("a workspace admin can change routing strategy", adminRoutingUpdate.rowCount === 1);
 

@@ -1,6 +1,6 @@
-# Nest reference dashboard
+# Camp reference dashboard
 
-Nest is TandemCRM's reference operator dashboard. It is a Next.js example,
+Camp is TandemCRM's reference operator dashboard. It is a Next.js example,
 not a separate Tandem service: it reads and writes through the same Postgres
 database that hosts the Tandem event log and projections.
 
@@ -55,7 +55,7 @@ function instead of adding an auth vendor to Tandem:
 3. Ensure that stable user id is present in `tandem.members.user_id` for the
    selected `TANDEM_WORKSPACE_ID`. The package's `TandemAdminAdapter` is the
    portable membership-provisioning contract.
-4. Keep your own provider's route protection/middleware. Nest deliberately
+4. Keep your own provider's route protection/middleware. Camp deliberately
    does not ship Clerk, Supabase Auth, Auth0, or another identity SDK.
 
 The default (no `TANDEM_AUTH_MODE`) remains the seed-data demo mode. Host

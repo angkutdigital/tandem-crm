@@ -356,12 +356,12 @@ export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
   }));
 }
 
-export type RoutingStrategy = "round_robin" | "least_loaded" | "manual";
+export type WaypointStrategy = "round_robin" | "least_loaded" | "manual";
 
-export async function getRoutingStrategy(userId: string): Promise<RoutingStrategy> {
+export async function getWaypointStrategy(userId: string): Promise<WaypointStrategy> {
   const result = await withTandemSession(pool, userId, (client) =>
-    client.query<{ strategy: RoutingStrategy }>(
-      `select strategy from tandem.routing_settings where workspace_id = $1 limit 1`,
+    client.query<{ strategy: WaypointStrategy }>(
+      `select strategy from tandem.waypoint_settings where workspace_id = $1 limit 1`,
       [WORKSPACE_ID]
     )
   );
@@ -473,7 +473,7 @@ export async function getDisputeDetail(userId: string, disputeId: string): Promi
                 select 1 from tandem.events e
                 where e.workspace_id = d.workspace_id
                   and e.lead_id = d.lead_id
-                  and e.source = 'coaster-dispute'
+                  and e.source = 'belay-dispute'
                   and e.source_event_id = 'dispute:' || d.id::text || ':outcome'
               ) as outcome_applied
        from tandem.disputes d

@@ -2,14 +2,14 @@
 
 import { useState, useTransition, type ComponentType } from "react";
 import { Loader2, Route, Shuffle, Users } from "lucide-react";
-import { setRoutingStrategy } from "@/lib/actions";
-import type { RoutingStrategy } from "@/lib/queries";
+import { setWaypointStrategy } from "@/lib/actions";
+import type { WaypointStrategy } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 
-const strategyOrder: RoutingStrategy[] = ["round_robin", "least_loaded", "manual"];
+const strategyOrder: WaypointStrategy[] = ["round_robin", "least_loaded", "manual"];
 
 const strategyOptions: Record<
-  RoutingStrategy,
+  WaypointStrategy,
   {
     label: string;
     description: string;
@@ -33,13 +33,13 @@ const strategyOptions: Record<
   },
 };
 
-export function RoutingStrategyForm({
+export function WaypointStrategyForm({
   currentStrategy,
 }: {
-  currentStrategy: RoutingStrategy;
+  currentStrategy: WaypointStrategy;
 }) {
   const [isPending, startTransition] = useTransition();
-  const [pendingStrategy, setPendingStrategy] = useState<RoutingStrategy | null>(
+  const [pendingStrategy, setPendingStrategy] = useState<WaypointStrategy | null>(
     null,
   );
 
@@ -47,12 +47,12 @@ export function RoutingStrategyForm({
     isPending && pendingStrategy ? pendingStrategy : currentStrategy;
   const activeOption = strategyOptions[activeStrategy];
 
-  function handleSelect(strategy: RoutingStrategy) {
+  function handleSelect(strategy: WaypointStrategy) {
     if (strategy === activeStrategy || isPending) return;
 
     setPendingStrategy(strategy);
     startTransition(async () => {
-      await setRoutingStrategy(strategy);
+      await setWaypointStrategy(strategy);
     });
   }
 
