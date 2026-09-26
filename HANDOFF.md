@@ -3,6 +3,90 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): product direction correction — this is an embeddable CRM, not just a commission engine
+
+Read this before writing any more copy, README text, or roadmap language.
+The owner explicitly corrected the framing this session: **Tandem is meant
+to be a real embeddable CRM** — contacts/leads, sales-cycle tracking,
+partner-commission handling, and disputes, all as one product — not a
+commission engine with a CRM label loosely attached. The package name
+(`tandem-crm`) was already right; the shipped product just hadn't caught up
+to it yet. This is not scope creep to second-guess; it's the actual target.
+
+**The launch directive, stated explicitly by the owner: "installs like
+Payload out of the box."** Not a v2 nice-to-have. The Nest reference
+dashboard needs to become a genuinely *installable* admin — something a
+host `npm install`s and mounts into their own Next.js app with config, the
+way `@payloadcms/next` or `tinacms` work — not a fork-this-example-repo
+experience. This is the single highest-priority piece of remaining work and
+should be treated as launch-blocking, not deferred.
+
+**Why this doesn't make the engine heavy, and why the admin doesn't have to
+either, if built right.** Measured directly this session, real
+`npm install` + `du -sh`, not estimates:
+
+| | `node_modules` | packages |
+|---|---|---|
+| `tandem-crm` engine (all 5 modules + its one dependency, `pg`) | ~1.0 MB | 14 |
+| Next.js + React alone (baseline every option below also pays) | 319 MB | 22 |
+| Payload (`payload` + `@payloadcms/next` + `@payloadcms/db-postgres` + `@payloadcms/richtext-lexical`) | 752 MB (~433 MB over the Next.js baseline) | 286 |
+| TinaCMS (`tinacms` + `@tinacms/cli`) | 969 MB (~650 MB over the Next.js baseline) | 681 — actually *heavier* than Payload, despite Tina's "lightweight, git-backed" reputation; a lot of that is its own local indexing DB (`better-sqlite3`) and CLI tooling |
+| Tandem's current reference dashboard, as it exists today | 615 MB (~296 MB over the Next.js baseline) | 494 |
+
+Two conclusions that should drive the architecture from here:
+1. **The engine's own code is never the weight problem** — Core alone
+   compiles to 16 KB, the other four modules are 4–8 KB each. Splitting a
+   `tandem-core`-only package out from the full `tandem-crm` would save
+   kilobytes, not megabytes. Don't bother; it's not where the win is.
+2. **TinaCMS has an open, unresolved GitHub issue** (tinacms/tinacms#2395,
+   also #771) asking for its own admin route to be dynamically loaded so it
+   stops leaking ~800–900KB into a host site's production bundle. It hasn't
+   solved this. Don't assume "build it like Tina" means the weight problem
+   is solved — it isn't, even for Tina. Marketing "the admin is lightweight"
+   the way "the engine is lightweight" is claimed would be a promise this
+   package can't back up yet either, unless the following is actually done:
+
+**The concrete architecture requirement this implies:** the admin must ship
+as a **separate installable package** from the engine (something like
+`@tandem-crm/nest` or `tandem-crm/admin`), not bundled into `tandem-crm`
+itself, so a host who only wants the engine never pays for chart/data-grid/
+drag-and-drop dependencies at all. Within that admin package, routes should
+be code-split (Next.js dynamic imports) so unused screens (e.g. a host not
+using Coaster) don't ship extra JS to every page. This is a real engineering
+project, not a config flag — go into it expecting genuine effort, the same
+way Payload and Tina both did.
+
+**Also decided this session, on launch scope for the money-rules gap:**
+partial refunds and multiple payments per lead stay explicitly out of scope
+for launch — mark it "Coming soon" / "Planned" wherever it's documented
+(same honest-roadmap pattern as everything else here), don't build it now.
+The business rules genuinely aren't decided yet (see the open-source-gaps
+history), and building code against undecided rules is worse than not
+building it.
+
+**Two other concrete v1-scope items from this session, not yet started:**
+- **A formal `TandemPayoutAdapter`** (mirroring `TandemAuthAdapter`'s
+  existing shape), with one reference implementation against Stripe Connect.
+  Tandem already never moves money itself — a host always calls
+  `commission.paid` after executing their own transfer — but that plug
+  point is informal right now. Formalizing it and shipping one real example
+  is a credible, moderate-effort launch claim: "plug in Stripe, Tandem
+  handles the ledger."
+- **Promote sales stage to a first-class lead field**, not something buried
+  inside the latest Trail activity entry. Right now there are two different
+  pipelines quietly conflated: the commission pipeline (`Automated_Setup` →
+  `Won` → `Commission_Paid`, what the Kanban groups by today) and the sales
+  pipeline (`New` → `Contacted` → `Qualified` → `Negotiating`, currently only
+  visible inside individual Trail entries). A real sales-funnel view needs
+  the sales stage queryable on the lead itself.
+
+**Explicitly deferred to post-launch (v2), by the owner's own call, not
+mine:** Trail's fuller CRM buildout — tasks/follow-up reminders with due
+dates, a deal value distinct from the commission math, and multiple
+contacts per lead/account. All real, all wanted, all bigger than a "beef
+up" — genuinely new schema and its own event types, deserves its own round
+rather than being squeezed into the installable-admin push.
+
 ## Update (2026-09-26): Nest configuration path complete
 
 - Workspace setup now includes **commission policy**: an owner/admin can

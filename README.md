@@ -1,6 +1,8 @@
 # Tandem CRM
 
-An embeddable, event-sourced partner-attribution and commission-payout engine for Postgres. Install it directly into your own Next.js (or any Node) app. No separate service to run, no vendor lock-in.
+An embeddable, event-sourced CRM engine for Postgres: leads, agents, sales-cycle activity, partner commissions, and dispute handling, all as typed append-only facts. Install it directly into your own Next.js (or any Node) app. No separate service to run, no vendor lock-in.
+
+**What "embeddable" means in practice:** `tandem-crm` (this package) is the engine — five modules (Core, Ramp, Routing, Coaster, Trail), one runtime dependency (`pg`), no UI. A separate, installable admin package (in progress — see [Where this is going](#where-this-is-going)) is meant to mount a real CRM interface into your own Next.js app the way `@payloadcms/next` or `tinacms` do, rather than handing you an example repo to fork. Today, `examples/dashboard` is that reference example; it is not yet the installable package.
 
 **Status:** in production use today, powering a real partner login and commission-tracking flow for the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; identity resolution and RLS are also verified against a plain, non-Supabase Postgres 16 instance, so implementing `TandemAuthAdapter` against Neon, RDS, Clerk, BetterAuth, or your own session table needs no changes to the package itself. See [CHANGELOG.md](./CHANGELOG.md) for what shipped when.
 
@@ -114,12 +116,31 @@ Dispute events live in their own append-only log, `tandem.dispute_events`, for t
 
 The one place Coaster changes Core's own behavior: `release_due_commissions()` now skips a payout with an open or queried dispute, even past its release date. Everywhere else, Coaster only reads Core's leads and payouts.
 
+Executing an upheld dispute's outcome is a separate, explicit step from resolving it: three Core event types exist for a host to append after reading a resolved dispute's category and outcome — `commission.adjusted` (correct an unpaid commission's amount), `commission.reinstated` (bring a `voided` commission back to `held` with a fresh amount/release date), and `commission.clawback_requested` (record money owed back on an already-paid commission, without Tandem reversing the payment itself — it never touches money). Coaster still never appends these on its own; the host decides.
+
+## Trail: lightweight sales activity
+
+Trail is a per-lead activity log — the minimum a sales cycle actually needs, kept deliberately free-text-first rather than a full CRM object model. An agent logs a visit report (`phone`, `physical`, or `email`), a 1–10 confidence rating, a sales stage, and a note; entries can be corrected or retracted without deleting history (both show as `corrected`/`retracted`, never silently gone).
+
+Trail events live in their own append-only log, `tandem.trail_events`, projected into `tandem.trail_entries`, same pattern as Ramp and Coaster. `replayTrailEntries()` folds a lead's whole activity stream into one entry per id, oldest first. Tandem never reads or acts on Trail data itself; it's purely something an agent records and an owner/admin reviews.
+
+**Known scope gap, on purpose, deferred to a later release:** sales stage currently lives on the Trail entry, not as a queryable field on the lead itself, which means it's conflated with the commission pipeline (`Automated_Setup` → `Won` → `Commission_Paid`) for anything that groups leads by status today (e.g. the reference dashboard's kanban board). A real sales-funnel view needs sales stage promoted to a first-class lead field. Also deliberately out of scope for now: tasks/follow-up reminders, a deal value distinct from commission math, and multiple contacts per lead — real CRM features, each larger than a Trail tweak, planned for their own release rather than squeezed in here.
+
+## Where this is going
+
+Tandem's target shape is a real embeddable CRM: leads, agents, sales-cycle activity, partner commissions, and disputes as one product, installed the way Payload or Tina install — not a commission engine with a CRM label loosely attached. Concretely, still ahead:
+
+- **An installable admin package**, separate from the engine, mounted into a host's own Next.js app with config rather than forked as example code. Kept as a separate package deliberately: a host who only wants the engine should never pay for the admin's chart/data-grid/drag-and-drop dependencies. Measured directly (real `npm install` + `du -sh`, not estimates): the whole `tandem-crm` engine plus its one dependency (`pg`) is about 1 MB; a realistic Payload install is ~433 MB beyond a bare Next.js app, and a realistic Tina install is ~650 MB beyond the same baseline. The engine was never going to be the weight problem — keeping the eventual admin package that light is the actual engineering goal, and neither Payload nor Tina has fully solved it either (Tina's own admin-bundle-size issue is still open upstream).
+- **A formal payout adapter**, mirroring `TandemAuthAdapter`'s shape, with a reference implementation against Stripe Connect. Tandem already never moves money itself; this makes that plug point a documented interface instead of an implicit convention.
+- **Sales stage as a first-class lead field**, not buried inside a Trail entry (see the Trail section above).
+
 ## Open items
 
 - The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers Core read/write boundaries, Ramp's template/progress/recertification boundary, Routing configuration, Coaster dispute visibility/resolution, and Trail activity writes. It uses a disposable real Postgres database, not mocks.
-- No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only.
-- Coaster records a dispute's outcome but does not execute it: no automatic replacement commission, amount adjustment, or clawback of an already-paid commission yet. Also missing: admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
+- No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only. Deliberately deferred — the business rules aren't decided yet, not just unbuilt.
+- Coaster can execute an upheld dispute's outcome (see above), but has no scheduled auto-execution and no admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
+- The installable admin package, the Stripe payout adapter, and sales-stage-as-a-lead-field are not started — see "Where this is going" above.
 
 ## Local verification
 
