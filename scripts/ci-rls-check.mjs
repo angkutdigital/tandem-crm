@@ -64,11 +64,6 @@ async function main() {
       "insert into tandem.members (workspace_id, user_id, role, agent_id) values ($1, $2, 'owner', null), ($3, $4, 'owner', null), ($5, $6, 'agent', $7)",
       [workspaceA, userA, workspaceB, userB, workspaceA, agentUserA, agentA]
     );
-```
-
-scripts/ci-rls-check.mjs
-```javascript
-<<<<<<< SEARCH
     await pool.query(
       `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
        values ($1, $2, 'CI Lead A', 1, 'Won', $3), ($4, $5, 'CI Lead B', 1, 'Won', $6)`,
