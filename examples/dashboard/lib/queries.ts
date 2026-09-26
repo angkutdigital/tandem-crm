@@ -65,6 +65,14 @@ export type AgentSummary = {
   openLeadCount: number;
 };
 
+/** A certification fact stays current only while every currently-required
+ * step is complete. Requirement templates can change after certification. */
+export function isAgentCurrentlyCertified(
+  agent: Pick<AgentSummary, "certifiedAt" | "completedStepCount" | "requiredStepCount">
+): boolean {
+  return agent.certifiedAt !== null && agent.completedStepCount === agent.requiredStepCount;
+}
+
 export async function getAgentSummaries(userId: string): Promise<AgentSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
@@ -80,17 +88,22 @@ export async function getAgentSummaries(userId: string): Promise<AgentSummary[]>
       `select
          a.id, a.display_name, a.active,
          s.started_at, s.certified_at,
-         coalesce(array_length(nullif(cs.completed, '{}'::text[]), 1), 0) as completed_step_count,
+         coalesce((
+           select count(*)
+           from tandem.onboarding_steps os
+           where os.workspace_id = a.workspace_id and os.required
+             and exists (
+               select 1 from tandem.agent_events e
+               where e.workspace_id = a.workspace_id and e.agent_id = a.id
+                 and e.event_type = 'onboarding.step_completed'
+                 and e.payload->>'stepCode' = os.code
+             )
+         ), 0) as completed_step_count,
          (select count(*) from tandem.onboarding_steps os where os.workspace_id = a.workspace_id and os.required) as required_step_count,
          (select count(*) from tandem.leads l where l.workspace_id = a.workspace_id and l.assignee_id = a.id
             and l.pipeline_status not in ('Commission_Paid', 'Lost', 'Refunded')) as open_lead_count
        from tandem.agents a
        left join tandem.agent_onboarding_status s on s.workspace_id = a.workspace_id and s.agent_id = a.id
-       left join lateral (
-         select array_agg(distinct (payload->>'stepCode')) as completed
-         from tandem.agent_events e
-         where e.workspace_id = a.workspace_id and e.agent_id = a.id and e.event_type = 'onboarding.step_completed'
-       ) cs on true
        where a.workspace_id = $1
        order by a.display_name`,
       [WORKSPACE_ID]

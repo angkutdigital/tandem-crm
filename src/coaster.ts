@@ -152,9 +152,10 @@ export function disputeAutoApproveAt(openedAt: string, autoApproveDays: number):
   return new Date(autoApproveAt).toISOString();
 }
 
-/** A pure decision only; Tandem never resolves a dispute itself. Honoring an overdue
- * timeout means the calling application appends its own dispute.resolved event with
- * outcome "upheld", the same non-enforcement split as the rest of this codebase. */
+/** A pure decision for callers that need to show an overdue state before a
+ * scheduler runs. The vendor-neutral database scheduler in migration 015 can
+ * resolve due disputes; this function itself remains deterministic and has no
+ * clock, database, or deployment dependency. */
 export function isDisputeOverdue(state: DisputeState | null, nowIso: string): boolean {
   if (state === null || state.status === "resolved") return false;
   return instant(nowIso) >= instant(state.autoApproveAt);

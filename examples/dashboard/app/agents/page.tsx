@@ -4,10 +4,11 @@ import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getAgentSummaries, requireCurrentMember, type AgentSummary } from "@/lib/queries";
+import { getAgentSummaries, isAgentCurrentlyCertified, requireCurrentMember, type AgentSummary } from "@/lib/queries";
 
 function statusFor(agent: AgentSummary) {
-  if (agent.certifiedAt) return { label: "Certified", variant: "default" as const };
+  if (isAgentCurrentlyCertified(agent)) return { label: "Certified", variant: "default" as const };
+  if (agent.certifiedAt) return { label: "Needs review", variant: "destructive" as const };
   if (agent.startedAt) return { label: "In progress", variant: "secondary" as const };
   return { label: "Not started", variant: "outline" as const };
 }

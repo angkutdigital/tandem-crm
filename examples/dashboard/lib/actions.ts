@@ -307,6 +307,17 @@ export async function certifyAgent(agentId: string): Promise<void> {
   await appendOnboardingEvent(agentId, "onboarding.certified", {});
 }
 
+/** Only an owner/admin may reopen a certification after the workspace changes
+ * its requirements. The database enforces the same boundary as defence in
+ * depth; this check gives the application a clear, immediate error too. */
+export async function reopenAgentCertification(agentId: string): Promise<void> {
+  const member = await requireCurrentMember();
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can reopen certification");
+  }
+  await appendOnboardingEvent(agentId, "onboarding.reopened", {});
+}
+
 export async function setRoutingStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, (client) =>

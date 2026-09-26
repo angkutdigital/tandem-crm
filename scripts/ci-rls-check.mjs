@@ -50,6 +50,11 @@ async function main() {
   const payoutA = randomUUID();
   const payoutEventA = randomUUID();
   const overdueDisputeA = randomUUID();
+  const policyDisputeA = randomUUID();
+  const adminCreatedLeadA = randomUUID();
+  const adminCreateEventA = randomUUID();
+  const agentCreatedLeadA = randomUUID();
+  const onboardingStepA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -64,6 +69,11 @@ async function main() {
     await pool.query(
       "insert into tandem.members (workspace_id, user_id, role, agent_id) values ($1, $2, 'owner', null), ($3, $4, 'owner', null), ($5, $6, 'agent', $7)",
       [workspaceA, userA, workspaceB, userB, workspaceA, agentUserA, agentA]
+    );
+    await pool.query(
+      `insert into tandem.agent_onboarding_status (workspace_id, agent_id)
+       values ($1, $2), ($3, $4)`,
+      [workspaceA, agentA, workspaceB, agentB]
     );
     await pool.query(
       `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
@@ -92,6 +102,17 @@ async function main() {
        values ($1, $2, $3, $4, $5, 'incorrect', 1200, 'CI overdue dispute',
                'open', now() - interval '2 days', now() - interval '1 day')`,
       [overdueDisputeA, workspaceA, leadA, payoutA, agentA]
+    );
+    // This second, still-open projection exists solely to exercise Coaster's
+    // interactive RLS boundary below. The overdue dispute is intentionally
+    // consumed by the scheduler test, so it cannot also model an open case.
+    await pool.query(
+      `insert into tandem.disputes
+         (id, workspace_id, lead_id, payout_id, opened_by_agent_id, category,
+          expected_amount_minor, description, status, opened_at, auto_approve_at)
+       values ($1, $2, $3, $4, $5, 'untracked', null, 'CI policy dispute',
+               'open', now(), now() + interval '30 days')`,
+      [policyDisputeA, workspaceA, leadA, payoutA, agentA]
     );
     await pool.query("commit");
   } catch (error) {
@@ -165,6 +186,196 @@ async function main() {
     client.query("select id from tandem.leads")
   );
   check("a user with no membership anywhere sees zero leads", leadsAsStranger.rows.length === 0);
+
+  // Core creation is an event plus a projection in one transaction. This
+  // verifies migration 016's narrow admin-only INSERT permission, which the
+  // reference dashboard uses for its New lead flow.
+  const adminCreatedLead = await withTandemSession(pool, userA, async (client) => {
+    const event = await client.query(
+      `insert into tandem.events
+         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'lead', $3, $3, 'ci', 'ci-admin-lead-created', 'lead.created', $4, now())
+       returning sequence`,
+      [adminCreateEventA, workspaceA, adminCreatedLeadA, JSON.stringify({
+        companyName: "CI admin-created lead", qualificationMetric: 1, qualification: "Automated_Setup",
+      })]
+    );
+    return client.query(
+      `insert into tandem.leads
+         (id, workspace_id, company_name, qualification_metric, pipeline_status, last_event_sequence)
+       values ($1, $2, 'CI admin-created lead', 1, 'Automated_Setup', $3)`,
+      [adminCreatedLeadA, workspaceA, event.rows[0].sequence]
+    );
+  });
+  check("a workspace admin can materialize a new lead projection", adminCreatedLead.rowCount === 1);
+
+  let agentLeadCreateBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.leads
+           (id, workspace_id, company_name, qualification_metric, pipeline_status)
+         values ($1, $2, 'Agent-created lead', 1, 'Automated_Setup')`,
+        [agentCreatedLeadA, workspaceA]
+      )
+    );
+  } catch {
+    agentLeadCreateBlocked = true;
+  }
+  check("an agent cannot create an unassigned lead", agentLeadCreateBlocked);
+
+  const agentOwnEvent = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      `insert into tandem.events
+         (workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, 'lead', $2, $2, 'ci', 'ci-agent-own-lead-event', 'lead.lost', $3, now())`,
+      [workspaceA, leadA, JSON.stringify({ reason: "CI write-policy check" })]
+    )
+  );
+  check("an agent can append an event for their assigned lead", agentOwnEvent.rowCount === 1);
+
+  const agentOwnProjection = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      `update tandem.leads
+       set last_event_sequence = coalesce(last_event_sequence, 0) + 1
+       where id = $1`,
+      [leadA]
+    )
+  );
+  check("an agent can update only their own lead projection", agentOwnProjection.rowCount === 1);
+
+  let agentCrossTenantEventBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.events
+           (workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+         values ($1, 'lead', $2, $2, 'ci', 'ci-agent-cross-tenant-event', 'lead.lost', $3, now())`,
+        [workspaceB, leadB, JSON.stringify({ reason: "must be blocked" })]
+      )
+    );
+  } catch {
+    agentCrossTenantEventBlocked = true;
+  }
+  check("an agent cannot append an event for another workspace's lead", agentCrossTenantEventBlocked);
+
+  // Ramp's template is admin-managed; the agent owns the normal progress
+  // events for their own profile, while an explicit reopening of a past
+  // certification is an admin decision.
+  const adminOnboardingStep = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      `insert into tandem.onboarding_steps (id, workspace_id, code, label, required)
+       values ($1, $2, 'agreement_signed', 'Agreement signed', true)`,
+      [onboardingStepA, workspaceA]
+    )
+  );
+  check("a workspace admin can configure an onboarding step", adminOnboardingStep.rowCount === 1);
+
+  let agentOnboardingConfigBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.onboarding_steps (workspace_id, code, label, required)
+         values ($1, 'agent-added-step', 'Agent-added step', true)`,
+        [workspaceA]
+      )
+    );
+  } catch {
+    agentOnboardingConfigBlocked = true;
+  }
+  check("an agent cannot change the onboarding template", agentOnboardingConfigBlocked);
+
+  const agentOnboardingStart = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      `insert into tandem.agent_events
+         (workspace_id, agent_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'ci', 'ci-agent-onboarding-start', 'onboarding.started', '{}'::jsonb, now())`,
+      [workspaceA, agentA]
+    )
+  );
+  check("an agent can start their own onboarding", agentOnboardingStart.rowCount === 1);
+
+  let agentReopenBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.agent_events
+           (workspace_id, agent_id, source, source_event_id, event_type, payload, occurred_at)
+         values ($1, $2, 'ci', 'ci-agent-forbidden-reopen', 'onboarding.reopened', '{}'::jsonb, now())`,
+        [workspaceA, agentA]
+      )
+    );
+  } catch {
+    agentReopenBlocked = true;
+  }
+  check("an agent cannot reopen their own certification", agentReopenBlocked);
+
+  const adminReopen = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      `insert into tandem.agent_events
+         (workspace_id, agent_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'ci', 'ci-admin-reopen', 'onboarding.reopened', '{}'::jsonb, now())`,
+      [workspaceA, agentA]
+    )
+  );
+  check("a workspace admin can reopen certification", adminReopen.rowCount === 1);
+
+  const agentOwnOnboardingProjection = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      "update tandem.agent_onboarding_status set started_at = now() where workspace_id = $1 and agent_id = $2",
+      [workspaceA, agentA]
+    )
+  );
+  check("an agent can update only their own onboarding projection", agentOwnOnboardingProjection.rowCount === 1);
+
+  const crossTenantOnboardingRead = await withTandemSession(pool, userB, (client) =>
+    client.query(
+      "select agent_id from tandem.agent_onboarding_status where workspace_id = $1 and agent_id = $2",
+      [workspaceA, agentA]
+    )
+  );
+  check("workspace B's owner cannot read workspace A's onboarding", crossTenantOnboardingRead.rows.length === 0);
+
+  // Coaster must follow the same tenant and role boundaries as Core: the
+  // assigned agent can read their own lead's dispute, but only a workspace
+  // admin may append an operator question or resolution.
+  const disputesAsAgent = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("select id from tandem.disputes order by id")
+  );
+  check(
+    "an assigned agent sees only workspace A's own disputes",
+    disputesAsAgent.rows.length === 2 && disputesAsAgent.rows.some((row) => row.id === policyDisputeA)
+  );
+
+  const crossTenantDisputeRead = await withTandemSession(pool, userB, (client) =>
+    client.query("select id from tandem.disputes where id = $1", [policyDisputeA])
+  );
+  check("workspace B's owner cannot read workspace A's dispute", crossTenantDisputeRead.rows.length === 0);
+
+  let agentResolutionBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.dispute_events
+           (workspace_id, dispute_id, lead_id, payout_id, source, source_event_id, event_type, payload, occurred_at)
+         values ($1, $2, $3, $4, 'ci', 'ci-agent-forbidden-resolution', 'dispute.resolved', $5, now())`,
+        [workspaceA, policyDisputeA, leadA, payoutA, JSON.stringify({ outcome: "upheld", note: "Agent must not resolve" })]
+      )
+    );
+  } catch {
+    agentResolutionBlocked = true;
+  }
+  check("an agent cannot resolve a dispute", agentResolutionBlocked);
+
+  const adminQuery = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      `insert into tandem.dispute_events
+         (workspace_id, dispute_id, lead_id, payout_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, $3, $4, 'ci', 'ci-admin-dispute-query', 'dispute.queried', $5, now())`,
+      [workspaceA, policyDisputeA, leadA, payoutA, JSON.stringify({ question: "Please provide evidence" })]
+    )
+  );
+  check("a workspace admin can append an operator dispute event", adminQuery.rowCount === 1);
 
   // Migration 013 added an admin-only UPDATE policy on tandem.payouts. An
   // admin (workspace A's owner) must be able to move a payout through its

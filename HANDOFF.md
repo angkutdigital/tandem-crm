@@ -3,6 +3,64 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): Coaster, Core, and Ramp closed for v1
+
+The owner asked for the three near-complete domain modules to be closed in
+this order: **Coaster → Core → Ramp**. Each had one real remaining v1 gap;
+all three are now closed and tested. The next module to evaluate is Routing,
+not a new feature or installer work.
+
+### Coaster checkpoint complete
+
+- The agreed financial rule is now fully represented: an outcome may create a
+  typed, auditable financial recommendation, but it never silently moves money;
+  an owner/admin confirms any real-world execution.
+- Added real database coverage for Coaster's permissions: an assigned agent can
+  see their own dispute but cannot append a resolution; a workspace admin can
+  append the operator event; an owner in another workspace cannot read it.
+- The disposable-Postgres run applied all 13 active migrations and passed the
+  scheduler's resolve-and-retry behavior, the new Coaster RLS checks, and the
+  existing Core payout/RLS checks. `npm test` remains 87/87 green.
+- Coaster is now **v1-complete**. Deliberately excluded from its scope: payment
+  execution integrations and unrelated fraud/compliance holds; those are host
+  policy/features, not a gap in partner-dispute handling.
+
+### Core checkpoint complete
+
+- Fixed a production RLS gap in the event-plus-projection creation path:
+  migration `016_tandem_core_lead_creation.sql` permits a workspace owner/admin
+  to insert the first lead projection after a validated `lead.created` fact.
+  Previously, the event could be written but the dashboard's New lead action
+  could not materialize its projection under `authenticated`.
+- The permission is intentionally admin-only. An agent cannot invent an
+  unassigned lead or bypass routing; a server-side inbound adapter without a
+  human identity continues to use the host's trusted writer.
+- Expanded the real-Postgres check to prove admin event+projection creation,
+  agent denial for new leads, an agent's permitted own-lead event/projection
+  write, and a blocked cross-tenant event append.
+- Core is now **v1-complete**: replay/idempotency, integer-money lifecycle,
+  migrations, RLS/session handling, and the normal transactional writer path
+  all have tested behavior.
+
+### Ramp checkpoint complete
+
+- Added the explicit `onboarding.reopened` event and migration `017`. When a
+  workspace adds a required step after an earlier certification, an owner/admin
+  can reopen the lifecycle without deleting the original certification history;
+  the agent then completes the added step and certifies again.
+- The database permits self-service start/step/certify only for an agent's own
+  profile. Reopening is admin-only at both the server action and RLS layers.
+- The dashboard derives a current certification from both the certification
+  event and the *current* required-step set. It shows “Needs review” instead
+  of falsely showing “Certified,” and gives a manager the explicit reopen
+  control on the agent page.
+- Real-Postgres coverage now checks Ramp configuration, own-profile progress,
+  cross-workspace isolation, and the agent/admin reopen boundary. The suite is
+  **88/88** domain tests plus the full 15-migration RLS run.
+- Ramp is now **v1-complete**. It intentionally remains a lightweight
+  certification tracker—not an LMS, document store, quiz system, or automatic
+  sales/commission gate.
+
 ## Update (2026-09-26): Coaster scheduling + dashboard hardening
 
 Work happened on `codex/coaster-resolution-verification` after the Trail
@@ -221,10 +279,9 @@ exists (Keep a Changelog format). An automated cross-tenant RLS check
 (`scripts/ci-rls-check.mjs`) runs in CI as the `rls` job against a real
 Postgres 16 service container.
 
-**Known gap, stated honestly in SECURITY.md/README, not hidden:** the
-automated RLS check covers the core schema (events, payouts, leads,
-onboarding) but not yet Ramp/routing/Coaster's own tables, nor the write
-side (an agent inserting/updating a row that isn't theirs).
+**Historical note, superseded by the 2026-09-26 closeout above:** the RLS
+check now covers Core writes, Ramp, and Coaster. Routing is the remaining
+module-specific RLS surface to add before its own v1 closeout.
 
 **Coaster dispute-execution and clawback (DONE, this session):** three new
 `domain.ts` event types exist now for a host app to append after reading a
@@ -240,12 +297,9 @@ amount → recompute via `calculateCommissionMinor` against the lead's
 payment, not a caller-supplied number; execution stays a separate explicit
 step, not automatic on `dispute.resolved`) were confirmed with the owner
 before writing any of this — see [[tandem-crm-open-source-gaps]] for why
-that mattered. 12 new domain tests, all passing. **Not done:** wiring these
-into the real `tandem.payouts` projection needs its own RLS/grants
-decision — `authenticated` has no `UPDATE` grant on `tandem.payouts` at
-all today, which turns out to be a pre-existing gap that also affects the
-existing `commission.approved`/`paid`/`voided` transitions, not something
-new. That's the next real piece of Coaster work.
+that mattered. The projection/grants decision, dashboard path, scheduler,
+and RLS regression coverage were completed in subsequent milestones; see the
+current closeout at the top of this file.
 
 **What Coaster still does not do:**
 
@@ -253,11 +307,11 @@ new. That's the next real piece of Coaster work.
   Migration `015` now provides `tandem.resolve_overdue_disputes()`; the
   customer must grant a reviewed scheduler role permission to call it on a
   cadence appropriate to their deployment.
-- Admin-initiated holds unrelated to a partner's own dispute, and any
-  dashboard UI for any of Coaster.
-- The RLS/grants decision above, without which none of this session's new
-  events can actually be written to `tandem.payouts` by an app running as
-  `authenticated`.
+- Admin-initiated holds unrelated to a partner's own dispute. This is a
+  separate fraud/compliance module, not a missing dispute workflow.
+- External payment execution. Tandem records an audited adjustment, void,
+  reinstatement, or clawback request; a host payment system performs money
+  movement only after its own authorized confirmation.
 
 **Not started:** npm publish prep beyond what's in `package.json` today
 (`files`, dual entry points, `sideEffects: false` are already set), a

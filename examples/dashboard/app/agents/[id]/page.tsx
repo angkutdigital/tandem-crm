@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -14,6 +15,7 @@ import {
   getOnboardingSteps,
   requireCurrentMember,
 } from "@/lib/queries";
+import { reopenAgentCertification } from "@/lib/actions";
 
 function humanizeStatus(status: string) {
   return status.replace(/_/g, " ");
@@ -62,9 +64,15 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
   const completedRequired = requiredSteps.filter((step) =>
     agent.completedStepCodes.includes(step.code)
   ).length;
+  const certificationCurrent = agent.certifiedAt !== null && completedRequired === requiredSteps.length;
+  const canReopenCertification = (member.role === "owner" || member.role === "admin")
+    && agent.certifiedAt !== null
+    && !certificationCurrent;
 
-  const statusBadge = agent.certifiedAt ? (
+  const statusBadge = certificationCurrent ? (
     <Badge>Certified</Badge>
+  ) : agent.certifiedAt ? (
+    <Badge variant="destructive">Needs review</Badge>
   ) : agent.startedAt ? (
     <Badge variant="secondary">In progress</Badge>
   ) : (
@@ -82,13 +90,31 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
           {statusBadge}
         </div>
         <p className="text-sm text-muted-foreground">
-          {agent.certifiedAt
-            ? `Certified ${formatDate(agent.certifiedAt)}`
+          {certificationCurrent
+            ? `Certified ${formatDate(agent.certifiedAt!)}`
+            : agent.certifiedAt
+              ? "Certification needs review after the onboarding requirements changed"
             : agent.startedAt
               ? `Started onboarding ${formatDate(agent.startedAt)}`
               : "Has not started onboarding yet"}
         </p>
       </header>
+
+      {canReopenCertification ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Certification needs review</CardTitle>
+            <CardDescription>
+              This agent was certified before the current required checklist was complete. Reopen the lifecycle so they can complete the new requirement and certify again; prior history remains in the audit log.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form action={reopenAgentCertification.bind(null, agent.id)}>
+              <Button type="submit" variant="outline">Reopen certification</Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

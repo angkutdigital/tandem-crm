@@ -39,9 +39,12 @@ describe("Tandem Ramp deterministic replay", () => {
   it("rejects invalid transitions", () => {
     expect(() => replay([fact(1, "onboarding.step_completed", { stepCode: "agreement_signed" })])).toThrow("invalid transition");
     expect(() => replay([fact(1, "onboarding.started", {}), fact(2, "onboarding.started", {})])).toThrow("invalid transition");
+    expect(() => replay([fact(1, "onboarding.started", {}), fact(2, "onboarding.reopened", {})])).toThrow("invalid transition");
     const certified = [...inProgress(), fact(4, "onboarding.certified", {})];
     expect(() => replay([...certified, fact(5, "onboarding.step_completed", { stepCode: "late" })])).toThrow("invalid transition");
     expect(() => replay([...certified, fact(5, "onboarding.certified", {})])).toThrow("invalid transition");
+    const reopened = [...certified, fact(5, "onboarding.reopened", {})];
+    expect(() => replay([...reopened, fact(6, "onboarding.reopened", {})])).toThrow("invalid transition");
   });
   it("rejects unknown persisted event types during replay", () => {
     const unknown = { ...inProgress()[0], type: "onboarding.reset" } as unknown as AgentOnboardingEvent;
@@ -67,5 +70,19 @@ describe("Tandem Ramp certification", () => {
   it("is not certified if a since-added required step was never completed", () => {
     const state = replay([...inProgress(), fact(4, "onboarding.certified", {})]);
     expect(isAgentCertified(state, [...requiredSteps, "shadowed_first_call"])).toBe(false);
+  });
+  it("can be explicitly reopened after requirements change, without losing completed work", () => {
+    const certified = [...inProgress(), fact(4, "onboarding.certified", {})];
+    const reopened = replay([...certified, fact(5, "onboarding.reopened", {})]);
+    expect(reopened).toMatchObject({ certifiedAt: null, completedStepCodes: requiredSteps, lastSequence: 5 });
+    expect(isAgentCertified(reopened, requiredSteps)).toBe(false);
+
+    const recertified = replay([
+      ...certified,
+      fact(5, "onboarding.reopened", {}),
+      fact(6, "onboarding.step_completed", { stepCode: "shadowed_first_call" }),
+      fact(7, "onboarding.certified", {}),
+    ]);
+    expect(isAgentCertified(recertified, [...requiredSteps, "shadowed_first_call"])).toBe(true);
   });
 });
