@@ -2,7 +2,7 @@
 
 An embeddable, event-sourced CRM engine for Postgres: leads, agents, sales-cycle activity, partner commissions, and dispute handling, all as typed append-only facts. Install it directly into your own Next.js (or any Node) app. No separate service to run, no vendor lock-in.
 
-**What "embeddable" means in practice:** `tandem-crm` (this package) is the engine — five modules (Terrain, Ascent, Waypoint, Belay, Trail), one runtime dependency (`pg`), no UI. A separate, installable admin package, `tandem-camp` (in progress — see [Where this is going](#where-this-is-going)), is meant to mount a real CRM interface into your own Next.js app the way `@payloadcms/next` or `tinacms` do, rather than handing you an example repo to fork. Today, `examples/dashboard` is that reference example; it is not yet the installable package.
+**What "embeddable" means in practice:** `tandem-crm` (this package) is the engine — five modules (Terrain, Ascent, Waypoint, Belay, Trail), one runtime dependency (`pg`), no UI. A separate, installable admin package, `tandem-camp` (partially migrated — see [packages/camp/README.md](./packages/camp/README.md) for exactly which screens), mounts a real CRM interface into your own Next.js app the way `@payloadcms/next` or `tinacms` do, rather than handing you an example repo to fork: Overview, Leads, and Payouts (including real Approve/Pay actions) are live and verified against real Postgres today; the rest of what `examples/dashboard` demonstrates — Agents, Disputes, Earnings, Settings, lead detail/Trail, the kanban board — has not moved into `tandem-camp` yet and still only exists as reference example code.
 
 **Status:** in production use today, powering a real partner login and commission-tracking flow for the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; identity resolution and RLS are also verified against a plain, non-Supabase Postgres 16 instance, so implementing `TandemAuthAdapter` against Neon, RDS, Clerk, BetterAuth, or your own session table needs no changes to the package itself. See [CHANGELOG.md](./CHANGELOG.md) for what shipped when.
 
@@ -21,6 +21,18 @@ The intended host is a thin server-rendered admin and partner portal backed by P
 Inbound adapters may receive events from any CRM, payment, chat, or manual source. Terrain's own code has no Stripe, Tawk, or payout-provider dependency. A payout adapter must convert an approved commission to either a recorded manual payout or a verified external payout event; Terrain never assumes a bank transfer happened.
 
 Agents, territories, mappings, commission rules, and workspace settings are mutable configuration. Lead creation, assignment, conversion, payment, refund, and commission transitions are immutable business facts. Flexible lead attributes belong in the lead projection; only business-significant changes should become typed events. The current reducer models one commission hold per lead and full refunds before payout. Partial refunds, multiple payments, and post-payout clawbacks require additional event types before production use.
+
+## Quickstart: `npx tandem-crm init`
+
+The fastest path from a fresh Postgres database to a working installation. Requires an elevated connection (the database owner or a superuser, the same credential level `db/migrations` themselves need) -- not the restricted `authenticated`-only connection your app uses at runtime.
+
+```sh
+npx tandem-crm init --database-url "$DATABASE_URL" --sample-data
+```
+
+This applies every migration, grants the connecting role `authenticated` (see "One-time setup this requires" below for why that step exists), runs a health check (migrations recorded, `authenticated` role exists, the connecting role can assume it, RLS is actually enabled on every core table), and seeds a small demo workspace -- agents, leads spanning the pipeline, a held and a paid commission -- so there's something real to query immediately. Swap `--sample-data` for `--admin-user-id <uuid>` (an id from your own auth system; Tandem never creates auth users itself) to bootstrap an empty workspace instead. Run `npx tandem-crm init --help` for the full option list.
+
+Everything below this section is what `init` does for you, spelled out for anyone who wants to run the steps by hand or understand exactly what changed in their database.
 
 ## Database setup
 
@@ -90,6 +102,23 @@ export type TandemAuthAdapter = {
 
 The Supabase implementation lives outside the package at `src/lib/supabase/tandemSupabaseAdapter.ts` and is passed in by callers (e.g. `getCurrentTandemMember(tandemSupabaseAdapter, workspaceId)`). To plug in a non-Supabase backend, implement `TandemAuthAdapter` against that backend and pass it to the same functions. No changes to the package are required.
 
+## Adapter pattern (vendor-neutral payouts)
+
+Tandem never moves money itself: it only ever records that a payout *already* happened, via `commission.paid`. `payoutAdapter.ts` formalizes the plug point a host uses to actually execute that transfer, mirroring `TandemAuthAdapter`'s shape:
+
+```typescript
+export type TandemPayoutAdapter = {
+  executePayout(payout: {
+    payoutId: string;
+    partnerId: string;
+    amountMinor: number;
+    currency: string;
+  }): Promise<{ payoutReference: string }>;
+};
+```
+
+A reference implementation against Stripe Connect lives outside the core package at `examples/dashboard/lib/stripePayoutAdapter.ts` (the core package itself has zero dependency on the `stripe` SDK, same reasoning as the auth adapter). A host calls `adapter.executePayout(...)` from their own approve/pay action, and only appends `commission.paid` with the returned reference once that call succeeds — if it throws, nothing is recorded and the payout stays `approved`, safely retryable. The reference dashboard's Payouts page demonstrates the full flow: an owner/admin approves an eligible payout (`commission.approved`), then pays it (`commission.paid`, via the configured adapter).
+
 ## Setup verification (`doctor.ts`)
 
 `runTandemDoctor(supabaseUrl, supabaseKey)` makes plain `fetch` calls (no SDK) against a live project and reports whether the `tandem` schema is exposed to PostgREST and whether a public key is correctly denied direct access. It is meant to be run standalone against an installation from the outside. It is not yet wired into a CLI or `package.json` script; that is a follow-up.
@@ -124,15 +153,15 @@ Trail is a per-lead activity log — the minimum a sales cycle actually needs, k
 
 Trail events live in their own append-only log, `tandem.trail_events`, projected into `tandem.trail_entries`, same pattern as Ascent and Belay. `replayTrailEntries()` folds a lead's whole activity stream into one entry per id, oldest first. Tandem never reads or acts on Trail data itself; it's purely something an agent records and an owner/admin reviews.
 
-**Known scope gap, on purpose, deferred to a later release:** sales stage currently lives on the Trail entry, not as a queryable field on the lead itself, which means it's conflated with the commission pipeline (`Automated_Setup` → `Won` → `Commission_Paid`) for anything that groups leads by status today (e.g. the reference dashboard's kanban board). A real sales-funnel view needs sales stage promoted to a first-class lead field. Also deliberately out of scope for now: tasks/follow-up reminders, a deal value distinct from commission math, and multiple contacts per lead — real CRM features, each larger than a Trail tweak, planned for their own release rather than squeezed in here.
+Sales stage (`New` → `Contacted` → `Qualified` → `Negotiating` → `Closed_Won`/`Closed_Lost`) is a first-class field on `LeadState` (`domain.ts`'s `leadSalesStages`/`lead.stage_changed`), a separate axis from `TandemLeadStatus`'s commission pipeline (`Automated_Setup` → `Won` → `Commission_Paid`). A lead can be `Commission_Paid` with sales stage still `Closed_Won`, or `Negotiating` with no commission event yet — the two don't gate each other. Trail's own `salesStage` field on a visit-report entry is unchanged (`trailSalesStages`/`TrailSalesStage` are now aliases of the domain.ts versions); the reference dashboard keeps the lead's promoted field in sync with whatever an agent logs in Trail, in the same transaction as the Trail write.
+
+**Deliberately out of scope for now:** tasks/follow-up reminders, a deal value distinct from commission math, and multiple contacts per lead — real CRM features, each larger than a Trail tweak, planned for their own release rather than squeezed in here.
 
 ## Where this is going
 
 Tandem's target shape is a real embeddable CRM: leads, agents, sales-cycle activity, partner commissions, and disputes as one product, installed the way Payload or Tina install — not a commission engine with a CRM label loosely attached. Concretely, still ahead:
 
-- **Camp, the installable admin package** (`tandem-camp` in code), separate from the engine, mounted into a host's own Next.js app with config rather than forked as example code. Kept as a separate package deliberately: a host who only wants the engine should never pay for the admin's chart/data-grid/drag-and-drop dependencies. Measured directly (real `npm install` + `du -sh`, not estimates): the whole `tandem-crm` engine plus its one dependency (`pg`) is about 1 MB; a realistic Payload install is ~433 MB beyond a bare Next.js app, and a realistic Tina install is ~650 MB beyond the same baseline. The engine was never going to be the weight problem — keeping Camp that light is the actual engineering goal, and neither Payload nor Tina has fully solved it either (Tina's own admin-bundle-size issue is still open upstream).
-- **A formal payout adapter**, mirroring `TandemAuthAdapter`'s shape, with a reference implementation against Stripe Connect. Tandem already never moves money itself; this makes that plug point a documented interface instead of an implicit convention.
-- **Sales stage as a first-class lead field**, not buried inside a Trail entry (see the Trail section above).
+- **Finishing Camp's migration.** The mount contract itself (`mountTandemCamp`, `CampRootPage`, the config-singleton pattern) is done and live-verified — see [packages/camp/README.md](./packages/camp/README.md)'s "Migration status" for exactly which screens (Overview, Leads, Payouts) have moved from `examples/dashboard` into `tandem-camp` and which (Agents, Disputes, Earnings, Settings, lead detail/Trail, the kanban board) haven't. Kept as a separate package deliberately: a host who only wants the engine should never pay for the admin's chart/data-grid/drag-and-drop dependencies. Measured directly (real `npm install` + `du -sh`, not estimates): the whole `tandem-crm` engine plus its one dependency (`pg`) is about 1 MB; a realistic Payload install is ~433 MB beyond a bare Next.js app, and a realistic Tina install is ~650 MB beyond the same baseline. The engine was never going to be the weight problem — keeping Camp that light is the actual engineering goal, and neither Payload nor Tina has fully solved it either (Tina's own admin-bundle-size issue is still open upstream).
 
 ## Open items
 
@@ -140,7 +169,7 @@ Tandem's target shape is a real embeddable CRM: leads, agents, sales-cycle activ
 - No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only. Deliberately deferred — the business rules aren't decided yet, not just unbuilt.
 - Belay can execute an upheld dispute's outcome (see above), but has no scheduled auto-execution and no admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
-- Camp, the Stripe payout adapter, and sales-stage-as-a-lead-field are not started — see "Where this is going" above.
+- Camp is 3 of roughly 10 reference-dashboard screens migrated — see "Where this is going" above and packages/camp/README.md.
 
 ## Local verification
 

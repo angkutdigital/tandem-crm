@@ -3,6 +3,408 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-27): Disputes/Belay migrated to Camp; first real Vercel deploy attempt found two real, general build bugs
+
+### Disputes/Belay migration
+
+The fifth screen migrated into `tandem-camp` (Overview, Leads, Payouts,
+now Disputes), following the same pattern, live-verified the same way.
+This is the most money-adjacent screen ported so far (Execute Outcome:
+adjust/reinstate/clawback) and was ported carefully, not mechanically --
+see `packages/camp/README.md`'s "Migration status" for the file list.
+
+**A real bug caught by live verification, not by writing the code
+carefully enough the first time:** the payout-projection sync inside
+`appendLeadEvent` (added earlier this session for Approve/Pay) only wrote
+`status` to `tandem.payouts`. That was enough for `commission.approved`/
+`commission.paid`, which don't change the amount -- but `commission.adjusted`
+does, and nothing was syncing `amount_minor` (or `release_at`, or the three
+clawback columns). The Core event log was correct the whole time; the
+*read-side projection* silently kept showing the old amount. Caught by
+actually clicking "Apply" on a real adjust action and checking the payout
+row with SQL afterward, not by code review -- the exact reason this
+project's own live-verification discipline exists. Fixed by porting the
+dashboard's original, more complete `UPDATE tandem.payouts` (it already
+had this right) instead of the simplified version written for
+Approve/Pay's narrower needs. Re-verified end to end with a fresh
+lead/payout/dispute: open → resolve upheld → adjust → confirmed the
+payout's displayed amount actually changed, and that re-applying is
+correctly rejected (idempotency key `belay-dispute` / `dispute:{id}:outcome`,
+which also needed `appendLeadEvent` to gain an `idempotency` parameter it
+didn't have before -- the first draft of `executeDisputeOutcome` silently
+had NO idempotency protection at all despite its own doc comment claiming
+it did, because the parameter to carry it through simply didn't exist yet).
+
+**DeepSeek/aider dispatch attempt for Agents stalled and produced nothing
+usable.** Dispatched with a detailed, self-contained prompt (source files,
+adaptation pattern, already-migrated reference files, explicit
+instructions), but it asked a clarifying question ("what's already in
+packages/camp/src/components/ui/?") and the non-interactive `--message-file`
+dispatch had no way to answer it, so the process exited having created one
+empty placeholder file. Cleaned up. Worth knowing before retrying this for
+the remaining screens: either include every piece of state the dispatch
+might ask about directly in the prompt up front (the UI directory listing,
+in this case), or expect to babysit it through at least one clarifying
+round-trip.
+
+### First real Vercel deploy attempt: two real, general bugs found, not Vercel quirks
+
+Deploying `examples/dashboard` to Vercel for the first time (Root
+Directory set correctly, "include outside files" enabled, Neon Postgres
+backing it) surfaced two build failures. Both are genuinely general bugs
+that would hit any CI/deploy provider doing a fresh checkout, not
+something specific to Vercel -- confirmed by reproducing both locally
+under the equivalent from-scratch conditions.
+
+1. **Build-time crash on missing `TANDEM_WORKSPACE_ID`:** `next build`
+   statically evaluates every route module's import graph during its
+   "collect page data" step, on every provider, even for a
+   `force-dynamic` route. `tandem-camp.config.ts` (the Camp verification
+   harness added earlier this session) called `mountTandemCamp()`
+   unconditionally at module load, and `mountTandemCamp`'s own correct,
+   intentional `workspaceId` validation threw, which failed the *entire*
+   `next build`, not just that one route. Fixed by guarding the call
+   (`if (WORKSPACE_ID) { mountTandemCamp(...) }`) so a missing env var at
+   build time degrades to "this one verification route 404s/errors at
+   runtime" instead of "the whole app fails to build." This is a real
+   gotcha for anyone integrating Camp for real, not just this harness --
+   worth remembering if `packages/camp` ever grows its own "how to
+   integrate" guide beyond the README's quickstart.
+2. **`Module not found: Can't resolve 'tandem-crm'`:** `dist/` is
+   (correctly) gitignored in both `tandem-crm` and `tandem-camp`. Vercel's
+   `npm install` resolves the `file:../..`/`file:../../packages/camp`
+   dependencies fine, but nothing had ever told it to actually *build*
+   them -- `next build` inside `examples/dashboard` only builds the
+   dashboard itself. Fixed at the right layer: `examples/dashboard`'s own
+   `"build"` script now runs `npm run build --prefix ../..` and
+   `npm run build --prefix ../../packages/camp` before `next build`. This
+   travels with the app regardless of host (Vercel, Netlify, Railway, a
+   Dockerfile) since it's not a platform-specific setting.
+
+Both fixes verified against the literal worst-case conditions (no
+pre-built `dist/` anywhere, no env vars set) with a real `npm run build`
+locally, not just reasoned about. The one genuinely Vercel-specific piece
+of this whole deploy is the "Include source files outside of the Root
+Directory" toggle -- any other provider will have its own equivalent
+setting for a monorepo whose app depends on sibling directories, and
+whoever sets that up next should expect to find it, not assume it's
+automatic.
+
+**Local demo data:** a real Neon Postgres project now exists for the
+public demo (`tandem-crm-demo`, ap-southeast-1/Singapore), migrated via
+`tandem-crm init` and seeded via `examples/dashboard/scripts/seed.mjs`
+with a fixed workspace id (`d000c000-0000-4000-8000-000000000001`) so it
+matches the dashboard's identity-switcher personas. Vercel deploy for this
+demo is in progress as of this entry, not yet confirmed live.
+
+## Update (2026-09-27): Camp mount contract designed and implemented; 3 of ~10 screens migrated
+
+The single highest-priority item named in the 2026-09-26 "product
+direction correction" entry below. This is real, working code, not a
+design doc: the mount contract is implemented, and three real screens
+(Overview, Leads, Payouts) are migrated from `examples/dashboard` into
+`packages/camp` and live-verified against real Postgres, including a real
+Stripe API round-trip through a server action. **Not all ~10 screens are
+migrated** -- see below for exactly what's left. Treat this as a real,
+substantial first slice of an XL task, not a finished migration.
+
+**The mount contract, decided and implemented:**
+- `mountTandemCamp(config)` registers a `TandemCampConfig` (pool,
+  workspaceId, authAdapter, optional adminAdapter/payoutAdapter) as a
+  module-level singleton, read by `getTandemCampConfig()` everywhere else
+  in the package. A host calls it once, in a config module imported for
+  its side effect by every Camp route (mirrors Payload's own
+  `payload.config.ts` + `getPayload({config})` pattern, and Next.js's own
+  `import "./globals.css"` side-effect-import convention for something
+  that must run once before routes render).
+- `CampRootPage({ params, searchParams, basePath })` is Camp's one route:
+  a host wires a single `app/.../[[...segments]]/page.tsx` catch-all to
+  it, the same shape `@payloadcms/next`'s `RootPage` uses, instead of one
+  file per screen. `basePath` must be the exact path the host mounted the
+  catch-all at (Camp has no way to detect its own mount point otherwise)
+  and is used to build this view's own nav/pagination links correctly
+  regardless of where a host mounts it.
+- Each view is dynamically imported inside its own switch branch in
+  `root.tsx`, not statically at the top of the file -- real code-splitting
+  for a catch-all-route package, not just a stated goal. Matters more as
+  more views migrate; the pattern is in place now.
+- Why a module-singleton and not React Context or per-call config
+  threading: Next.js Server Actions ("use server" functions a client
+  component calls directly) can't receive config as a runtime argument the
+  way a page component can, since the client has no server-side pool/
+  adapters to pass. A module-level singleton, set once at process startup
+  via a guaranteed side-effect import, is the same problem Payload solves
+  the same way (`getPayload({config})` resolving a cached instance from an
+  imported config module) -- not a shortcut invented for this session.
+
+**Screens migrated (see packages/camp/README.md's "Migration status" for
+the authoritative, current list):**
+- **Overview** -- simplified: only the owner/admin ("manager") view moved;
+  the per-agent "your own onboarding checklist" view has not.
+- **Leads** -- list view only; no kanban, no lead detail, no "New lead"
+  dialog.
+- **Payouts** -- including real Approve/Pay mutations. This is the one
+  that proves the config singleton works for server actions (not just
+  server components): verified with a real `StripeAuthenticationError`
+  from Stripe's own API, reached from `packages/camp/src/actions.ts`
+  through the same `createStripePayoutAdapter` this session's earlier
+  payout-adapter work already built and verified once, in
+  `examples/dashboard`.
+
+**Screens NOT migrated, still only in `examples/dashboard`:** Agents
+(roster + detail + onboarding actions), Disputes (Belay), Earnings,
+Settings (workspace setup, Waypoint strategy), lead detail + Trail
+activity, the Leads kanban board, the "New lead" dialog, and the per-agent
+Overview variant. Each is a real, separately-verifiable slice -- migrate
+and live-verify one at a time, the same way this round did, not several at
+once unverified. `lib/queries.ts`/`lib/actions.ts` in `examples/dashboard`
+are ~600/~850 lines respectively; only the ~15 functions Overview/Leads/
+Payouts needed were ported into `packages/camp/src/queries.ts`/`actions.ts`
+-- the rest (disputes, trail, earnings, agent detail, settings queries)
+still only exist in the dashboard's own files.
+
+**A real infrastructure fix needed along the way, not a shortcut:**
+`packages/camp/tsconfig.json` was cloned from the core `tandem-crm`
+package's tsconfig (`"module": "NodeNext", "moduleResolution": "NodeNext"`)
+when it was first scaffolded -- correct for a plain Node library, wrong for
+a Next.js-dependent package needing to resolve `next/navigation`,
+`next/cache`, etc. Switched to `"module": "esnext", "moduleResolution":
+"bundler"`, matching `examples/dashboard`'s own tsconfig exactly (Next.js
+apps conventionally use `bundler` resolution, not strict Node ESM
+resolution). Emitted JS is unaffected either way since relative imports in
+source already use explicit `.js` extensions; only type-checking behavior
+changed.
+
+**Verification harness (kept, not a one-off):**
+`examples/dashboard/app/tandem-camp/[[...segments]]/page.tsx` and
+`examples/dashboard/tandem-camp.config.ts` mount Camp live inside the
+reference dashboard app itself, reusing its existing pool/auth/payout
+wiring (`tandem-camp` added as a real `file:../../packages/camp`
+dependency). This is how Overview/Leads/Payouts were actually verified
+against real data end to end, including the real Stripe round-trip --
+not a pattern to copy for a real deployment (a real host wouldn't also run
+the parallel, non-Camp dashboard routes at the same time). Kept in place
+so the next session migrating another screen has a working harness to
+verify against immediately, without re-deriving this wiring.
+
+**Verified:** 92/92 vitest, root + `packages/camp` + dashboard typecheck
+all clean, `packages/camp` builds (`tsc -p tsconfig.build.json`) clean.
+Live-clicked through Overview, Leads, and Payouts in a real browser against
+real seeded Postgres data (the same `tandem_dashboard_dev` database earlier
+rounds this session set up), including navigating via Camp's own nav links
+(not just direct URL loads) and clicking "Pay" through to a real Stripe API
+401 response. Confirmed the dynamic-import code-splitting refactor didn't
+regress anything by re-running the same live checks afterward.
+
+**Next sensible milestone:** pick one of the not-yet-migrated screens
+(Agents is probably the next-smallest real slice: roster + detail +
+onboarding actions, no kanban/dnd-kit dependency) and migrate it the same
+way, verified against real Postgres before moving to the next one. Do not
+attempt to migrate several screens in one pass without live verification
+between them -- this is exactly the kind of security/data-integrity-
+adjacent surface (RLS-scoped queries, event-log writers) this project's
+own CONTRIBUTING.md and prior HANDOFF entries already caution about
+rushing.
+
+## Update (2026-09-27): generic install path (`npx tandem-crm init`)
+
+Closes the "next bounded milestone" named at the end of the 2026-09-26
+"Nest configuration path complete" entry below: `DATABASE_URL` -> migrations
+-> health check -> first workspace/admin bootstrap -> a safe sample/empty
+mode, all in one command, no internal migration/grant/seed steps required
+by hand.
+
+- **`bin/tandem-crm.mjs`** (new, published via `package.json`'s new `bin`
+  field): `npx tandem-crm init --database-url <url> [--sample-data |
+  --admin-user-id <uuid>] [--skip-grant] [--workspace-slug <slug>]`. Plain
+  `.mjs` against the built `dist/`, not a second TypeScript entry point --
+  same convention `scripts/ci-rls-check.mjs` already used. Runs
+  `applyTandemMigrations`, grants `authenticated` to the connecting role,
+  runs a real health check, then either seeds a small demo workspace or
+  bootstraps an empty one owned by a caller-supplied user id (Tandem still
+  never creates auth users itself -- same boundary as `TandemAdminAdapter`).
+  Requires an elevated connection (database owner/superuser), the same
+  credential level migrations themselves already need -- not the app's
+  restricted runtime `DATABASE_URL`.
+- **`bin/lib/healthCheck.mjs`**: a generic Postgres health check, not
+  Supabase-specific (unlike `src/doctor.ts`, which checks PostgREST
+  exposure -- a Supabase-only concern). Checks migrations recorded, the
+  `authenticated` role exists, the connecting role can actually assume it
+  (`pg_has_role`), and RLS is enabled on every core table (`pg_class.relrowsecurity`)
+  -- the exact class of bug this project has shipped before (a query with
+  no matching rows and a query with no policy applied at all look
+  identical without this check).
+- **`bin/lib/sampleData.mjs`**: `seedSampleWorkspace(pool, options)` and
+  `wipeSampleWorkspace(pool, workspaceId)`, generalized from
+  `examples/dashboard/scripts/seed.mjs`'s proven event-log-replay-then-write
+  pattern (that script is intentionally left alone as its own richer,
+  dashboard-specific demo dataset). `wipeSampleWorkspace` exists for a
+  future resettable live-demo sandbox and is explicitly documented as a
+  narrow, deliberate exception to Tandem's append-only design -- never call
+  it against a workspace with real history.
+- **Two real bugs found by actually running this, not just writing it:**
+  1. `wipeSampleWorkspace`'s first draft tried a plain `delete from
+     tandem.events ...`, which every append-only log (`events`,
+     `payout_ledger`, `agent_events`, `dispute_events`, `trail_events`) has
+     a trigger unconditionally rejecting -- see 002_tandem_events.sql's
+     `reject_event_mutation()`. Fixed by disabling/re-enabling each table's
+     specific immutability trigger for the duration of the one transaction
+     (only possible for the table owner; the ordinary `authenticated` app
+     role has no `ALTER TABLE` privilege and can't reach this path).
+  2. Same function's delete ordering hit a real, general schema property
+     nobody had exercised before: `tandem.members`' composite foreign key
+     to `tandem.agents` is `on delete set null`, which nulls BOTH
+     composite columns -- including `members.workspace_id`, which is
+     `NOT NULL`. Deleting `tandem.agents` before `tandem.members` throws.
+     Fixed by reordering the delete list (members before agents); this
+     never surfaces in normal production use because every other
+     agent-referencing foreign key is `on delete restrict`, so agents are
+     never actually deletable there in the first place -- only a full
+     workspace wipe like this one exercises it.
+- **Verified live against real, disposable Postgres instances (not just
+  written and typechecked):** ran `init --sample-data` end to end (17
+  migrations applied, grant, 8/8 health checks green, workspace seeded);
+  confirmed the seeded leads/payouts/sales-stage data with direct SQL; ran
+  `init --admin-user-id` for the empty-workspace path; confirmed re-running
+  `init` is idempotent on migrations; confirmed `--sample-data` and
+  `--admin-user-id` together are rejected; confirmed an unknown command and
+  no-args both print usage and exit non-zero; ran `wipeSampleWorkspace`
+  against a real seeded workspace, confirmed every row across all 15
+  tables gone and all five immutability triggers back to enabled
+  (`pg_trigger.tgenabled = 'O'`) afterward, in the same database. 92/92
+  vitest and the full disposable-Postgres RLS suite (52 checks, fresh
+  database) still pass.
+- **Not done, worth naming:** the CLI has no automated test file (it's a
+  thin orchestration layer over already-tested `applyTandemMigrations`
+  and the new lib functions, and was instead verified by actually running
+  it against disposable databases through every code path -- see above).
+  `examples/dashboard/scripts/seed.mjs` was deliberately left unmodified
+  rather than refactored to share code with `bin/lib/sampleData.mjs`;
+  they're two separate, intentionally similar implementations for now, not
+  one shared module -- a real future cleanup, not urgent.
+
+## Update (2026-09-27): formal TandemPayoutAdapter + Stripe Connect reference
+
+Closes the second of the two concrete v1-scope items named in the
+2026-09-26 "product direction correction" entry below (sales stage,
+directly above this entry, closed the first).
+
+- **`src/payoutAdapter.ts`:** `TandemPayoutAdapter`, mirroring
+  `TandemAuthAdapter`'s shape exactly -- a plain interface, zero vendor
+  dependency in the core package. One method, `executePayout({ payoutId,
+  partnerId, amountMinor, currency }): Promise<{ payoutReference }>`.
+  Exported from `index.ts`.
+- **`examples/dashboard/lib/stripePayoutAdapter.ts`:** the reference
+  implementation against Stripe Connect (`stripe.transfers.create`, with an
+  idempotency key derived from `payoutId` so a retried call can't move
+  money twice). Lives in the example app, not the core package -- same
+  "engine stays light" reasoning as everything else in the dependency-shape
+  section. A host supplies their own `partnerId -> Stripe connected
+  account id` mapping via `resolveConnectedAccountId`; Tandem has no
+  concept of a payment account.
+- **Dashboard wiring:** two new actions, `approveCommission` (appends
+  `commission.approved`) and `payCommission` (calls the configured adapter,
+  then appends `commission.paid` with the reference it returns -- two
+  separate steps, not one transaction spanning the network call, so a
+  failed transfer leaves the payout `approved` and safely retryable rather
+  than in an ambiguous state). Payouts page now has an Actions column:
+  "Approve" on an eligible payout, "Pay via Stripe" on an approved one,
+  both owner/admin-gated the same way `ExecuteOutcomeForm` already is on
+  the disputes page.
+- **`getConfiguredPayoutAdapter()`** (dashboard-only, `lib/actions.ts`)
+  reads `STRIPE_SECRET_KEY`/`STRIPE_CONNECTED_ACCOUNTS` from env and fails
+  closed with a clear error if either is missing/invalid -- same
+  fail-closed convention as `TANDEM_AUTH_MODE=host`'s `getHostUserId()`.
+- **Verified live against a real Postgres + a real Stripe API call, not
+  just typecheck:** approved a genuinely `eligible` payout (reached that
+  state through a real `commission.eligible` event, not a raw-SQL
+  shortcut -- see the gotcha this produced, below) through the dashboard;
+  confirmed via direct SQL that `commission.approved` was appended and the
+  payout projection flipped to `approved`. Clicked "Pay via Stripe" with no
+  `STRIPE_SECRET_KEY` configured: got the clear configuration-error toast,
+  payout stayed `approved`, nothing appended. Then set a syntactically
+  valid but fake `STRIPE_SECRET_KEY`/`STRIPE_CONNECTED_ACCOUNTS` and
+  clicked again: the request reached Stripe's real API and came back with
+  a genuine `StripeAuthenticationError` (401, real Stripe response
+  headers) -- proof the wiring is real, not mocked, without needing a live
+  Stripe test account for this session. 92/92 vitest, root + dashboard
+  typecheck, and the full disposable-Postgres RLS suite all still pass.
+- **Gotcha hit while setting up test data, worth remembering:** to test an
+  `approved`/`eligible` payout locally without waiting for a real release
+  date, do **not** just `UPDATE tandem.payouts SET release_at = ...` and
+  call `tandem.release_due_commissions()` -- that function reads the
+  *payouts projection's* `release_at`, not the immutable `commission.held`
+  event's own `releaseAt`, so it happily appends a real `commission.eligible`
+  event whose `occurredAt` predates the actual commission's recorded
+  release date. The event is immutable once written, and every later
+  replay of that lead throws `invalid transition: commission.eligible`
+  forever after -- the exact failure mode the reducer exists to prevent,
+  self-inflicted via raw SQL. Fixed by reseeding a fresh workspace and
+  appending a real, validly-timestamped `commission.eligible` event through
+  the actual writer path instead (a one-off script mirroring
+  `appendLeadEventWithClient`, `occurredAt` set at or after the commission's
+  real `releaseAt` -- which does not have to be "real wall-clock now",
+  event timestamps only need to be internally consistent).
+- **Local dev Postgres for the dashboard is now real, not just documented
+  as a manual process** (see the "things that will bite you" gotcha below,
+  now partially stale): `tandem_dashboard_dev` database and `dashboard_app`
+  role exist on this machine's local Postgres (`/tmp` socket and
+  `localhost:5432` both work), migrated and seeded, with
+  `examples/dashboard/.env.local` pointing at it. Reusable for the next
+  session instead of rebuilding from scratch -- still not scripted as a
+  first-class setup command, which is exactly what the "generic install
+  path" milestone below should produce.
+
+## Update (2026-09-27): sales stage promoted to a first-class lead field
+
+Closes one of the two concrete v1-scope items named in the 2026-09-26
+"product direction correction" entry below (the other, the Stripe Connect
+payout adapter, is still open).
+
+- **`domain.ts`:** added `leadSalesStages`/`LeadSalesStage` (New ->
+  Contacted -> Qualified -> Negotiating -> Closed_Won/Closed_Lost) and a
+  `salesStage` field on `LeadState`, plus a new `lead.stage_changed` event.
+  Defaults to `"New"` on `lead.created`; changeable any time the lead
+  exists, independent of `TandemLeadStatus` (an agent can mark
+  `Closed_Lost` even after the commission side is `Lost`, or move stages
+  while a commission is still held — the two axes don't gate each other).
+  `trail.ts`'s own `trailSalesStages`/`TrailSalesStage` are now aliases of
+  the domain.ts versions, not a second definition, so the two modules can't
+  drift out of sync.
+- **Migration `019_tandem_lead_sales_stage.sql`:** adds `tandem.leads.sales_stage`,
+  backfilled from each lead's latest non-retracted Trail entry where one
+  exists, `'New'` otherwise. No new grant or RLS policy needed — the
+  existing row-level `tandem_leads_update`/`tandem_leads_select` policies
+  already cover any column on the row.
+- **Dashboard wiring:** `logTrailVisit`/`correctTrailEntry` now also append
+  `lead.stage_changed` in the *same transaction* as the Trail write
+  whenever the picked stage differs from the lead's current one
+  (`appendLeadEvent` was split into a `appendLeadEventWithClient` that
+  takes an already-open client, specifically so this could share one
+  transaction instead of racing two). Sales stage now shows as its own
+  badge on the Leads list and lead detail header, next to (not folded
+  into) the existing commission-status badge.
+- **Real bug found and fixed during live verification, not just typecheck:**
+  `tandem.events.event_type` has a CHECK constraint enumerating every legal
+  event type (002, last extended by 013 for the three commission.*
+  dispute-outcome events). Migration 019 initially forgot to extend it for
+  `lead.stage_changed` — passed typecheck and all 92 vitest tests (which
+  never touch a real events table), but every real insert failed with
+  `events_event_type_check` violation, a 500 on submit. Caught by actually
+  clicking through the dashboard against a real Postgres instance, not by
+  any static check. Fixed in the same migration file; this is the exact
+  failure mode 013's own comment already warned about for exactly this
+  reason — worth remembering next time a new domain.ts event type is added.
+- **Verified:** 92/92 vitest, root + dashboard typecheck clean, the full
+  disposable-Postgres RLS suite (52 checks) green from a fresh database
+  both before and after the constraint fix. Live-clicked through a local
+  dev Postgres + dashboard: logged a Trail activity with stage
+  "Negotiating" on a real seeded lead, confirmed via direct SQL that
+  `tandem.trail_events`, `tandem.events` (`lead.stage_changed`), and
+  `tandem.leads.sales_stage` all updated in the same action, and that both
+  the lead detail page and the Leads list correctly show "Negotiating"
+  afterward.
+
 ## Update (2026-09-27): module rename done in code — Terrain/Ascent/Waypoint/Belay/Camp
 
 Follow-up to the naming-decision entry directly below this one (kept for
