@@ -41,7 +41,7 @@ export async function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <NavLinks />
+        <NavLinks role={member?.role ?? "agent"} />
       </SidebarContent>
 
       <SidebarFooter>

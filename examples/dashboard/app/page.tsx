@@ -149,13 +149,6 @@ export default async function OverviewPage() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
       <header className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-        <p className="text-sm text-muted-foreground">
-          Commission operations for the Tandem workspace, viewed as{" "}
-          <span className="font-medium text-foreground capitalize">
-            {member.role}
-          </span>
-          .
-        </p>
       </header>
 
       <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

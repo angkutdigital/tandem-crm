@@ -204,9 +204,6 @@ export default async function LeadsPage(props: PageProps<"/leads">) {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
       <header className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-        <p className="text-sm text-muted-foreground">
-          Every lead in your workspace, by pipeline status.
-        </p>
       </header>
 
       <ViewToggle activeView={activeView} />
