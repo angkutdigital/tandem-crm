@@ -1,66 +1,17 @@
 import { cookies } from "next/headers";
 import type { TandemAuthAdapter, TandemMemberRow } from "tandem-crm";
-import { pool } from "./db";
 import { withTandemSession } from "tandem-crm/db";
+
+import { pool } from "./db";
 import { DEFAULT_DEMO_USER_ID } from "./demo-users";
+import { getHostUserId } from "./host-auth";
 
 const SESSION_COOKIE = "tandem_demo_user";
 
-/**
- * Reference TandemAuthAdapter implementation. This example has no real
- * identity provider: "signing in" is a demo user switcher (see
- * components/user-switcher.tsx) that sets this cookie directly. It's still a
- * genuine adapter, implementing the same three methods any real one would
- * against Supabase Auth, Clerk, or a hand-rolled session table.
- *
- * getCurrentUserId runs on the plain pool: resolving *which* user is calling
- * is a prerequisite for scoping a session to them, not something that can
- * itself be scoped by an identity we don't have yet. getMember/getAnyMember
- * are different: they already have a userId, so they scope a real
- * withTandemSession to it, same as everything else, and rely on
- * tandem.members' own "read your own row" RLS policy rather than any
- * elevated access.
- */
-export const demoAuthAdapter: TandemAuthAdapter = {
-  async getCurrentUserId() {
-    const store = await cookies();
-    // middleware.ts sets this cookie for the browser's next request, but a
-    // request's own Server Components still see the cookie jar as it was
-    // when the request arrived, so the very first request (no cookie yet)
-    // falls back to the same default identity middleware would have set.
-    return store.get(SESSION_COOKIE)?.value ?? DEFAULT_DEMO_USER_ID;
-  },
-
-  async getMember(workspaceId, userId) {
-    const row = await withTandemSession(pool, userId, (client) =>
-      client.query<MemberRow>(
-        `select id, workspace_id, user_id, role, agent_id
-         from tandem.members
-         where workspace_id = $1 and user_id = $2`,
-        [workspaceId, userId]
-      )
-    );
-    return toMemberRow(row.rows[0]);
-  },
-
-  async getAnyMember(userId) {
-    const row = await withTandemSession(pool, userId, (client) =>
-      client.query<MemberRow>(
-        `select id, workspace_id, user_id, role, agent_id
-         from tandem.members
-         where user_id = $1
-         limit 1`,
-        [userId]
-      )
-    );
-    return toMemberRow(row.rows[0]);
-  },
-};
-
-export async function setDemoUser(userId: string): Promise<void> {
-  const store = await cookies();
-  store.set(SESSION_COOKIE, userId, { httpOnly: true, sameSite: "lax", path: "/" });
-}
+/** Demo remains the zero-config reference experience. A deployed dashboard
+ * must explicitly opt into host mode, where host-auth.ts is the only place
+ * identity is resolved. */
+export const isDemoAuth = process.env.TANDEM_AUTH_MODE !== "host";
 
 type MemberRow = {
   id: string;
@@ -79,4 +30,55 @@ function toMemberRow(row: MemberRow | undefined): TandemMemberRow | null {
     role: row.role,
     agentId: row.agent_id,
   };
+}
+
+function createDashboardAuthAdapter(
+  getCurrentUserId: () => Promise<string | null>
+): TandemAuthAdapter {
+  return {
+    getCurrentUserId,
+    async getMember(workspaceId, userId) {
+      const row = await withTandemSession(pool, userId, (client) =>
+        client.query<MemberRow>(
+          `select id, workspace_id, user_id, role, agent_id
+           from tandem.members
+           where workspace_id = $1 and user_id = $2`,
+          [workspaceId, userId]
+        )
+      );
+      return toMemberRow(row.rows[0]);
+    },
+    async getAnyMember(userId) {
+      const row = await withTandemSession(pool, userId, (client) =>
+        client.query<MemberRow>(
+          `select id, workspace_id, user_id, role, agent_id
+           from tandem.members
+           where user_id = $1
+           limit 1`,
+          [userId]
+        )
+      );
+      return toMemberRow(row.rows[0]);
+    },
+  };
+}
+
+export const demoAuthAdapter = createDashboardAuthAdapter(async () => {
+  const store = await cookies();
+  // middleware.ts writes this cookie for the next request. The fallback keeps
+  // the very first demo request deterministic as well.
+  return store.get(SESSION_COOKIE)?.value ?? DEFAULT_DEMO_USER_ID;
+});
+
+export const hostAuthAdapter = createDashboardAuthAdapter(getHostUserId);
+
+/** The adapter every page and action uses. The demo cookie is never read
+ * once a deployment deliberately selects host-auth mode. */
+export const dashboardAuthAdapter = isDemoAuth ? demoAuthAdapter : hostAuthAdapter;
+
+/** Used only by the reference-demo identity switcher. */
+export async function setDemoUser(userId: string): Promise<void> {
+  if (!isDemoAuth) throw new Error("demo identity switching is disabled in host auth mode");
+  const store = await cookies();
+  store.set(SESSION_COOKIE, userId, { httpOnly: true, sameSite: "lax", path: "/" });
 }

@@ -6,3 +6,4 @@ export * from "./doctor.js";
 export * from "./ramp.js";
 export * from "./routing.js";
 export * from "./coaster.js";
+export * from "./trail.js";

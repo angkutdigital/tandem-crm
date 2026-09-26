@@ -3,6 +3,171 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): Coaster scheduling + dashboard hardening
+
+Work happened on `codex/coaster-resolution-verification` after the Trail
+milestone. Current honest status: Core/Ramp/Routing/Trail are about **85–90%**
+of their intended v1 scopes; Coaster is **~90%** after the scheduled-overdue
+path below; the Nest reference dashboard is **~84%**; the published,
+self-service npm-product experience remains **~65%** because generic init,
+release/publish work, and broader deployment docs are deliberately not done.
+
+### Coaster overdue resolution is complete
+
+- Added migration `015_tandem_coaster_overdue_resolution.sql` with
+  `tandem.resolve_overdue_disputes()`. A customer's trusted cron/serverless
+  scheduler/database scheduler can call it at any cadence. Tandem does not
+  install a cron job or choose a platform.
+- It locks only due open/queried disputes, appends one idempotent immutable
+  `dispute.resolved` fact with outcome `upheld`, and updates the rebuildable
+  dispute projection. It deliberately **does not** adjust/reinstate/claw
+  back the commission: that stays an explicit host/operator choice.
+- Added the exact resolution + retry behavior to the disposable-Postgres CI
+  check. A fresh database applied all 13 active migrations and passed the
+  scheduler and RLS checks. Manual isolated-Postgres verification also
+  confirmed one resolve event/projection update and a no-op second call.
+
+### Dashboard production boundary and regression fixes
+
+- Nest now has a deliberate `TANDEM_AUTH_MODE=host` mode. It disables the
+  demo cookie/switcher and uses the one required `lib/host-auth.ts`
+  `getHostUserId()` resolver. The file fails closed until a customer replaces
+  it with their own verified server-side auth lookup; Tandem adds no auth SDK
+  or vendor dependency. The dashboard README documents the four host setup
+  steps.
+- Added the missing `/agents` roster page. Agent-role users are redirected to
+  their own profile rather than seeing a misleading team onboarding roster.
+- Fixed a real workspace-context bug throughout dashboard reads and writes:
+  RLS appropriately allows an owner to access every workspace they belong to,
+  but a dashboard configured for one `TANDEM_WORKSPACE_ID` must still add
+  that explicit filter. All dashboard query/action paths now scope to the
+  configured workspace. This was exposed by a clean seed test, where an
+  owner belongs to multiple demo workspaces.
+- Regression: `/`, `/leads`, `/agents`, `/payouts`, `/earnings`, `/disputes`,
+  `/settings/routing`, a lead detail, and an agent detail all returned 200
+  against a fresh clean seed. The browser rendered the lead Activity surface
+  and showed no console errors. A marked, visible local preview remains open
+  on the clean dashboard while the local dev server is running.
+
+### AI-ready architecture (implemented foundations, not an AI feature claim)
+
+Tandem is prepared for safe AI-assisted workflows because core business
+operations are typed deterministic reducers over append-only, idempotent
+events; projections are rebuildable; corrections/retractions preserve audit
+history; integer money and RLS constrain sensitive operations; and auth/
+database adapters keep provider decisions outside the core package. An AI
+agent can therefore be given narrow tools to propose or append validated
+facts while every action is attributable and replayable. **Not yet built:**
+an MCP/tool API, AI-agent permission policies, model evaluations, or AI
+observability. Do not market those as shipped until implemented.
+
+**Next bounded milestone:** generic npm initialization/install experience
+(`DATABASE_URL` → migrations → health check → first workspace/admin) and
+release hardening. Hosted provider provisioning belongs in the separate
+hosted Tandem CRM, not the core package.
+
+## Update (2026-09-26): Trail activity made usable in the reference CRM
+
+Work happened on `codex/coaster-resolution-verification` after Earnings.
+
+- **Lead activity is now a real workflow:** each lead detail page has an
+  Activity timeline with a compact `Log activity` form (phone, email, or
+  physical interaction; sales stage; confidence; free-text note). This is
+  the relationship context a normal CRM needs without introducing a second
+  lead/contact/task model into the package.
+- **Corrections retain trust:** an agent can correct an activity or retract
+  it. Both use Trail's existing immutable event stream and rebuildable
+  projection; the UI shows `corrected` and `retracted` rather than silently
+  deleting history. Retracted records can no longer be edited or retracted
+  again.
+- **Kept the package lightweight:** no core API, schema, or dependency was
+  added. This is reference-dashboard composition over the existing Trail
+  domain layer, actions, migrations, and RLS policies.
+- **Verified end-to-end in isolated Postgres:** logged an email interaction,
+  corrected its note and confidence, then retracted it. The browser timeline
+  showed each resulting state with no console errors. Database verification
+  found exactly one each of `trail.visit_logged`, `trail.entry_corrected`,
+  and `trail.entry_retracted`; its projection matched the final UI state.
+- **Checks:** dashboard TypeScript, root typecheck, and `npm test` (87
+  tests) pass. No production build attempt was added because this host's
+  Turbopack port-binding restriction is already recorded below.
+
+**Next bounded milestone:** run a short Product Hunt demo-flow pass: a
+clean seed, a first-run walkthrough, and an honest readiness checklist. Do
+not begin one-click provisioning until this demo flow is coherent.
+
+## Update (2026-09-26): Earnings dashboard completed
+
+Work happened on `codex/coaster-resolution-verification` after the Coaster
+resolution milestone.
+
+- **Added `/earnings`:** a member-scoped view of paid commission income with
+  week, month, year, and lifetime totals; a six-month paid-commission chart;
+  and a searchable, sortable, paginated earnings table. The existing query
+  contract intentionally includes only `status = 'paid'` money, so held and
+  eligible commissions cannot be presented as income.
+- **Added CSV export:** the earnings table generates `tandem-earnings.csv`
+  in the browser from the currently filtered paid-commission rows. It does
+  not add a server endpoint or transmit data anywhere.
+- **Extended the existing payout read model:** `getPayouts()` now exposes
+  nullable `paidAt`, allowing the earnings history to show the actual paid
+  date while keeping the existing Payouts page compatible.
+- **Navigation:** `Earnings` is now available beside Payouts in the Nest
+  dashboard sidebar.
+- **Verified live:** seeded dashboard data rendered RM 1,200 for the paid
+  Delta Cargo commission, correct period totals (RM 1,200 current
+  week/month/year and RM 6,000 lifetime), six month labels, and filtering.
+  Browser console errors were empty. The browser automation did not report
+  completion for a Blob-backed download event, but the enabled export button
+  and its client-side path were exercised.
+- **Checks:** root typecheck and dashboard-specific TypeScript check pass.
+  The dashboard production build remains blocked in this host by the known
+  Turbopack worker port-binding restriction. `npm run lint --prefix
+  examples/dashboard` also fails on pre-existing reui source lint errors;
+  this milestone introduced none.
+
+**Next bounded milestone:** add Trail activity to the Lead detail page, then
+run a short Product Hunt demo-flow pass. Do not start installer/provisioning
+work until those dashboard surfaces are done.
+
+## Update (2026-09-26): Coaster resolution path verified and fixed
+
+Work happened on `codex/coaster-resolution-verification`, based on
+`claude/nest-trail-build`.
+
+- **Verified live against a fresh, isolated Postgres instance:** the Nest
+  dashboard loaded with seeded data; an owner resolved an upheld dispute on
+  an unpaid commission and applied an amount adjustment; a second upheld
+  dispute on a paid commission created a clawback request. The detail page
+  displayed the updated payout amount/status and the recorded clawback.
+- **Fixed a real projection bug in `examples/dashboard/lib/actions.ts`:**
+  `executeDisputeOutcome()` appended its Core event, but the common
+  `appendLeadEvent()` writer did not update `tandem.payouts` or append its
+  audit-ledger row. The UI could therefore report an action as applied while
+  the payout projection kept the old data. The writer now locks and updates
+  the payout projection from the reducer result and records the event in
+  `tandem.payout_ledger`, in the same transaction.
+- **Added outcome idempotency:** the same resolved dispute now has one stable
+  `coaster-dispute` source-event key. Retrying the form created neither a
+  second Core event nor a second ledger row (confirmed against the database).
+  The dashboard also replaces the action form with an explicit “already
+  applied” state once that event exists.
+- **Checks passed:** root `npm test` (87 tests) and root typecheck. The
+  dashboard production build passed after the outcome-writing change; the
+  later display-only state change was live-verified in a browser. Subsequent
+  build attempts hit the host's Turbopack port-binding restriction, not a
+  TypeScript or application error.
+
+### Known demo-tooling follow-up
+
+**Resolved in the next milestone:** `examples/dashboard/scripts/seed.mjs`
+now creates a new demo workspace rather than deleting append-only history.
+It refuses an existing `TANDEM_WORKSPACE_ID`, prints the new id for the
+dashboard environment, and uses fresh tenant-owned ids so multiple demo
+workspaces can coexist. Verified: first seed succeeds, repeating the same id
+fails safely, and a second new workspace succeeds. The dashboard README now
+documents this no-Docker setup.
+
 **Update (this session):** Agent detail page, Leads (list + kanban +
 detail), and the `vehicleCount` → `qualificationMetric` genericization
 below are all now DONE (see "Where things stand" and the gotchas list,
@@ -84,9 +249,10 @@ new. That's the next real piece of Coaster work.
 
 **What Coaster still does not do:**
 
-- A scheduled function that auto-resolves overdue disputes (mirroring
-  `release_due_commissions()`); `isDisputeOverdue()` is a pure check
-  only, nothing calls it on a schedule.
+- Tandem intentionally does not install or configure a vendor cron job.
+  Migration `015` now provides `tandem.resolve_overdue_disputes()`; the
+  customer must grant a reviewed scheduler role permission to call it on a
+  cadence appropriate to their deployment.
 - Admin-initiated holds unrelated to a partner's own dispute, and any
   dashboard UI for any of Coaster.
 - The RLS/grants decision above, without which none of this session's new

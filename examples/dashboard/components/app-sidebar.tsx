@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Zap } from "lucide-react";
+import Image from "next/image";
 
 import { NavLinks } from "@/components/nav-links";
 import { UserSwitcher } from "@/components/user-switcher";
@@ -14,6 +14,7 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { currentMember } from "@/lib/queries";
+import { isDemoAuth } from "@/lib/auth";
 
 export async function AppSidebar() {
   const member = await currentMember();
@@ -25,14 +26,14 @@ export async function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link href="/" />}>
               <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                <Zap className="size-4" strokeWidth={2.5} />
+                <Image src="/logo-mark.svg" alt="" width={16} height={16} className="invert" />
               </div>
               <div className="grid flex-1 leading-tight">
                 <span className="truncate text-sm font-semibold tracking-tight">
-                  Tandem
+                  Nest
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
-                  Commission engine
+                  by TandemCRM
                 </span>
               </div>
             </SidebarMenuButton>
@@ -41,11 +42,11 @@ export async function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <NavLinks />
+        <NavLinks role={member?.role ?? "agent"} />
       </SidebarContent>
 
       <SidebarFooter>
-        <UserSwitcher currentMember={member} />
+        <UserSwitcher currentMember={member} demoMode={isDemoAuth} />
       </SidebarFooter>
 
       <SidebarRail />
