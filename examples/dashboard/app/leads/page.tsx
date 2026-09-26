@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AddLeadDialog } from "@/components/add-lead-dialog";
+import { LeadsKanbanBoard } from "@/components/leads-kanban-board";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -9,20 +10,20 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "cn";
-import { getLeads, requireCurrentMember, type LeadSummary } from "@/lib/queries";
+import { getLeads, getLeadsPage, requireCurrentMember, type LeadSummary } from "@/lib/queries";
 
-const PIPELINE_STATUSES = [
-  "Automated_Setup",
-  "Manual_Review",
-  "Won",
-  "Commission_Hold",
-  "Commission_Eligible",
-  "Commission_Paid",
-  "Lost",
-  "Refunded",
-] as const;
+const PAGE_SIZE = 10;
+const MAX_PAGE_LINKS = 5;
 
 function humanizeStatus(status: string) {
   return status.replace(/_/g, " ");
@@ -34,15 +35,6 @@ function formatUpdatedDate(updatedAt: string) {
     month: "short",
     day: "numeric",
   });
-}
-
-function initialsOf(name: string) {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
 }
 
 const statusVariantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
@@ -103,16 +95,73 @@ function LeadRow({ lead }: { lead: LeadSummary }) {
   );
 }
 
-function LeadsList({ leads }: { leads: LeadSummary[] }) {
+/** The window of page numbers to show, centered on the current page and
+ * clamped to the total page count. */
+function pageWindow(current: number, totalPages: number): number[] {
+  const size = Math.min(MAX_PAGE_LINKS, totalPages);
+  let start = Math.max(1, current - Math.floor(size / 2));
+  const end = Math.min(totalPages, start + size - 1);
+  start = Math.max(1, end - size + 1);
+  const pages: number[] = [];
+  for (let page = start; page <= end; page++) pages.push(page);
+  return pages;
+}
+
+function LeadsPagination({ page, total }: { page: number; total: number }) {
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (totalPages <= 1) return null;
+
+  const hrefFor = (target: number) => `/leads?view=list&page=${target}`;
+  const isFirst = page <= 1;
+  const isLast = page >= totalPages;
+
+  return (
+    <Pagination>
+      <PaginationContent>
+        <PaginationItem>
+          {isFirst ? (
+            <PaginationPrevious aria-disabled="true" className="pointer-events-none opacity-50" />
+          ) : (
+            <PaginationPrevious href={hrefFor(page - 1)} />
+          )}
+        </PaginationItem>
+        {pageWindow(page, totalPages).map((target) => (
+          <PaginationItem key={target}>
+            <PaginationLink href={hrefFor(target)} isActive={target === page}>
+              {target}
+            </PaginationLink>
+          </PaginationItem>
+        ))}
+        <PaginationItem>
+          {isLast ? (
+            <PaginationNext aria-disabled="true" className="pointer-events-none opacity-50" />
+          ) : (
+            <PaginationNext href={hrefFor(page + 1)} />
+          )}
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
+  );
+}
+
+function LeadsList({
+  leads,
+  total,
+  page,
+}: {
+  leads: LeadSummary[];
+  total: number;
+  page: number;
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>All leads</CardTitle>
         <CardDescription>
-          {leads.length === 0 ? "No leads yet" : `${leads.length} lead${leads.length === 1 ? "" : "s"}`}
+          {total === 0 ? "No leads yet" : `${total} lead${total === 1 ? "" : "s"}`}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
         {leads.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
             No leads yet.
@@ -135,70 +184,21 @@ function LeadsList({ leads }: { leads: LeadSummary[] }) {
             </TableBody>
           </Table>
         )}
+        <LeadsPagination page={page} total={total} />
       </CardContent>
     </Card>
   );
 }
 
-function LeadCard({ lead }: { lead: LeadSummary }) {
-  return (
-    <Link
-      href={`/leads/${lead.id}`}
-      className="flex flex-col gap-2 rounded-md border bg-card p-3 transition-colors hover:bg-muted/60"
-    >
-      <p className="truncate text-sm font-medium">{lead.companyName}</p>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <Avatar className="size-5">
-            <AvatarFallback className="text-[10px] font-medium">
-              {lead.assigneeName ? initialsOf(lead.assigneeName) : "?"}
-            </AvatarFallback>
-          </Avatar>
-          <span className="truncate text-xs text-muted-foreground">
-            {lead.assigneeName ?? "Unassigned"}
-          </span>
-        </div>
-        <span className="text-xs text-muted-foreground">{formatUpdatedDate(lead.updatedAt)}</span>
-      </div>
-    </Link>
-  );
-}
-
-function LeadsKanban({ leads }: { leads: LeadSummary[] }) {
-  return (
-    <div className="flex gap-4 overflow-x-auto pb-2">
-      {PIPELINE_STATUSES.map((status) => {
-        const columnLeads = leads.filter((lead) => lead.pipelineStatus === status);
-        return (
-          <div key={status} className="flex w-72 shrink-0 flex-col gap-3">
-            <div className="flex items-center justify-between px-0.5">
-              <h3 className="text-sm font-medium">{humanizeStatus(status)}</h3>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {columnLeads.length}
-              </span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {columnLeads.length === 0 ? (
-                <p className="rounded-md border border-dashed py-6 text-center text-xs text-muted-foreground">
-                  No leads
-                </p>
-              ) : (
-                columnLeads.map((lead) => <LeadCard key={lead.id} lead={lead} />)
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 export default async function LeadsPage(props: PageProps<"/leads">) {
-  const { view } = await props.searchParams;
+  const { view, page: pageParam } = await props.searchParams;
   const activeView = view === "kanban" ? "kanban" : "list";
 
+  const parsedPage = Number(Array.isArray(pageParam) ? pageParam[0] : pageParam);
+  const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
+
   const member = await requireCurrentMember();
-  const leads = await getLeads(member.userId);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
@@ -206,9 +206,23 @@ export default async function LeadsPage(props: PageProps<"/leads">) {
         <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
       </header>
 
-      <ViewToggle activeView={activeView} />
+      <div className="flex items-center justify-between gap-4">
+        <ViewToggle activeView={activeView} />
+        <AddLeadDialog />
+      </div>
 
-      {activeView === "kanban" ? <LeadsKanban leads={leads} /> : <LeadsList leads={leads} />}
+      {activeView === "kanban" ? (
+        <LeadsKanbanBoard leads={await getLeads(member.userId)} />
+      ) : (
+        await (async () => {
+          const { leads, total, page: resolvedPage } = await getLeadsPage(
+            member.userId,
+            page,
+            PAGE_SIZE
+          );
+          return <LeadsList leads={leads} total={total} page={resolvedPage} />;
+        })()
+      )}
     </div>
   );
 }
