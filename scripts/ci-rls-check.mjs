@@ -56,6 +56,7 @@ async function main() {
   const agentCreatedLeadA = randomUUID();
   const onboardingStepA = randomUUID();
   const trailEntryA = randomUUID();
+  const adminCreatedAgentA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -259,6 +260,35 @@ async function main() {
     agentCrossTenantEventBlocked = true;
   }
   check("an agent cannot append an event for another workspace's lead", agentCrossTenantEventBlocked);
+
+  // Nest's Add agent action uses this existing Core configuration boundary:
+  // a manager can create an operational profile, but an agent cannot grant
+  // themselves teammates or a cross-tenant profile.
+  const adminCreatedAgent = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      "insert into tandem.agents (id, workspace_id, display_name) values ($1, $2, 'CI manager-created agent')",
+      [adminCreatedAgentA, workspaceA]
+    )
+  );
+  check("a workspace admin can create an agent profile", adminCreatedAgent.rowCount === 1);
+
+  let agentProfileCreateBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        "insert into tandem.agents (workspace_id, display_name) values ($1, 'CI agent-created profile')",
+        [workspaceA]
+      )
+    );
+  } catch {
+    agentProfileCreateBlocked = true;
+  }
+  check("an agent cannot create another agent profile", agentProfileCreateBlocked);
+
+  const crossTenantAgentRead = await withTandemSession(pool, userB, (client) =>
+    client.query("select id from tandem.agents where id = $1", [adminCreatedAgentA])
+  );
+  check("workspace B's owner cannot read workspace A's agent profile", crossTenantAgentRead.rows.length === 0);
 
   // Ramp's template is admin-managed; the agent owns the normal progress
   // events for their own profile, while an explicit reopening of a past

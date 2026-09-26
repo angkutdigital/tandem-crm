@@ -318,6 +318,35 @@ export async function reopenAgentCertification(agentId: string): Promise<void> {
   await appendOnboardingEvent(agentId, "onboarding.reopened", {});
 }
 
+/** A profile is deliberately separate from login provisioning: Nest can create
+ * the operational agent record, while the host's auth system remains the only
+ * authority that links a real sign-in identity through tandem.members. */
+export async function createAgentProfile(input: {
+  displayName: string;
+  externalRef?: string;
+}): Promise<string> {
+  const member = await requireCurrentMember();
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can add an agent profile");
+  }
+  const displayName = input.displayName.trim();
+  const externalRef = input.externalRef?.trim() || null;
+  if (!displayName) throw new Error("agent name is required");
+
+  const agentId = randomUUID();
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.agents (id, workspace_id, display_name, external_ref)
+       values ($1, $2, $3, $4)`,
+      [agentId, WORKSPACE_ID, displayName, externalRef]
+    )
+  );
+  revalidatePath("/");
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${agentId}`);
+  return agentId;
+}
+
 export async function setRoutingStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, (client) =>

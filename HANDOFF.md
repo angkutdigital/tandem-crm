@@ -10,6 +10,21 @@ this order: **Coaster → Core → Ramp**. Each had one real remaining v1 gap;
 all three are now closed and tested. Routing and Trail are also closed. The
 next work is Nest's production-readiness workflow, not another domain module.
 
+### Nest production-readiness started: agent profiles
+
+- Added an owner/admin-only **Add agent** dashboard flow. It creates the
+  operational agent profile and opens it immediately; this is the first
+  self-service team-setup capability in Nest.
+- It deliberately does **not** create a login account. A host's own auth
+  provider remains the authority for credentials and later links its stable
+  user id in `tandem.members`, preserving Tandem's bring-your-own-auth model.
+- Live local verification added “Demo Operations Agent,” reached its profile,
+  and showed no browser-console errors. The permanent CI check proves admins
+  can create profiles while agents and other workspaces cannot.
+- **Next Nest slice:** owner-managed onboarding-step and territory setup.
+  This is higher value than cosmetic dashboard work because it removes the
+  remaining manual database configuration from a new workspace's first run.
+
 ### Coaster checkpoint complete
 
 - The agreed financial rule is now fully represented: an outcome may create a
