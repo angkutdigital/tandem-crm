@@ -8,20 +8,25 @@ import { replayAgentOnboardingEvents } from "tandem-crm";
 // directly to service-role-only tables (events, payouts) the way a real
 // projection writer would, which the app's own role can't do.
 const pool = createTandemPool(process.env.SEED_DATABASE_URL ?? process.env.DATABASE_URL);
-const WORKSPACE_ID = process.env.TANDEM_WORKSPACE_ID;
+// A fresh workspace per seed is deliberate: Tandem's event logs are
+// append-only, so a seed script must never pretend it can erase a prior
+// workspace and start its history over. Pass an id to make the dashboard
+// point at a known demo tenant, or omit it and use the printed value.
+const WORKSPACE_ID = process.env.TANDEM_WORKSPACE_ID ?? randomUUID();
 
 const now = Date.now();
 const daysAgo = (n) => new Date(now - n * 86_400_000).toISOString();
 
-// Fixed ids so re-seeding is deterministic and the demo user switcher can
-// reference these users by name.
+// Demo user ids stay fixed because the browser's identity switcher references
+// them. Tenant-owned ids are new for each workspace, so this seed can safely
+// create another demo workspace in the same database.
 const ids = {
-  territoryNorth: "a0000000-0000-0000-0000-000000000001",
-  territorySouth: "a0000000-0000-0000-0000-000000000002",
-  agentAmira: "b0000000-0000-0000-0000-000000000001",
-  agentFarid: "b0000000-0000-0000-0000-000000000002",
-  agentSiti: "b0000000-0000-0000-0000-000000000003",
-  agentWei: "b0000000-0000-0000-0000-000000000004",
+  territoryNorth: randomUUID(),
+  territorySouth: randomUUID(),
+  agentAmira: randomUUID(),
+  agentFarid: randomUUID(),
+  agentSiti: randomUUID(),
+  agentWei: randomUUID(),
   userOwner: "c0000000-0000-0000-0000-000000000001",
   userAmira: "c0000000-0000-0000-0000-000000000002",
   userFarid: "c0000000-0000-0000-0000-000000000003",
@@ -123,18 +128,20 @@ async function main() {
   try {
     await client.query("begin");
 
-    // Re-seedable: wipe this workspace's data in FK-safe order.
-    for (const table of [
-      "tandem.payout_ledger", "tandem.payouts", "tandem.events", "tandem.leads",
-      "tandem.agent_events", "tandem.agent_onboarding_status", "tandem.onboarding_steps",
-      "tandem.members", "tandem.agent_territories", "tandem.commission_rules",
-      "tandem.territories", "tandem.agents", "tandem.routing_settings",
-    ]) {
-      await client.query(`delete from ${table} where workspace_id = $1`, [WORKSPACE_ID]);
+    const existing = await client.query(
+      "select 1 from tandem.workspaces where id = $1",
+      [WORKSPACE_ID]
+    );
+    if ((existing.rowCount ?? 0) > 0) {
+      throw new Error(
+        `demo workspace ${WORKSPACE_ID} already exists; choose a new TANDEM_WORKSPACE_ID instead of deleting append-only history`
+      );
     }
-    await client.query("delete from tandem.workspaces where id = $1", [WORKSPACE_ID]);
 
-    await client.query(`insert into tandem.workspaces (id, slug) values ($1, 'demo')`, [WORKSPACE_ID]);
+    await client.query(
+      "insert into tandem.workspaces (id, slug) values ($1, $2)",
+      [WORKSPACE_ID, `demo-${WORKSPACE_ID}`]
+    );
 
     await client.query(
       `insert into tandem.territories (id, workspace_id, name, code) values
@@ -292,6 +299,7 @@ async function main() {
 
     await client.query("commit");
     console.log("Seeded workspace", WORKSPACE_ID);
+    console.log(`Start the dashboard with TANDEM_WORKSPACE_ID=${WORKSPACE_ID}`);
   } catch (error) {
     await client.query("rollback");
     throw error;

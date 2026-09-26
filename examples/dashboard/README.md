@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Nest reference dashboard
 
-## Getting Started
+Nest is TandemCRM's reference operator dashboard. It is a Next.js example,
+not a separate Tandem service: it reads and writes through the same Postgres
+database that hosts the Tandem event log and projections.
 
-First, run the development server:
+## Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 20 or later
+- A Postgres 14+ database that has Tandem's migrations applied
+- A dashboard connection role that can assume `authenticated`, as described
+  in the repository README's RLS setup section
+
+Build the package first, because this example imports the local package:
+
+```sh
+npm install
+npm run build
+npm install --prefix examples/dashboard
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Create demo data
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Run the seed script with an elevated connection that can write the event log
+and projections:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```sh
+cd examples/dashboard
+SEED_DATABASE_URL='postgres://...' node scripts/seed.mjs
+```
 
-## Learn More
+The script prints a new `TANDEM_WORKSPACE_ID`. Copy it into the dashboard's
+environment when you start the app:
 
-To learn more about Next.js, take a look at the following resources:
+```sh
+DATABASE_URL='postgres://dashboard_role@...' \
+TANDEM_WORKSPACE_ID='the-printed-workspace-id' \
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+No Docker container or Tandem-specific worker is required. The seed creates a
+new demo workspace each time. It deliberately refuses to overwrite an
+existing workspace, because Tandem's event logs are append-only. To make a
+fresh demo, run the seed again and use the newly printed workspace id.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The demo identity switcher exists only for this reference app. A production
+host app supplies its own `TandemAuthAdapter` and real sign-in flow.

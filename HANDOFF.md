@@ -33,12 +33,13 @@ Work happened on `codex/coaster-resolution-verification`, based on
 
 ### Known demo-tooling follow-up
 
-`examples/dashboard/scripts/seed.mjs` claims it is re-seedable but attempts
-to `delete` from the intentionally append-only `tandem.events` table; its
-trigger correctly rejects that deletion. A fresh database seeds successfully.
-Do not describe repeat seeding as supported until this script is redesigned
-for append-only data (for example, a new demo workspace per run or an
-explicitly disposable database reset).
+**Resolved in the next milestone:** `examples/dashboard/scripts/seed.mjs`
+now creates a new demo workspace rather than deleting append-only history.
+It refuses an existing `TANDEM_WORKSPACE_ID`, prints the new id for the
+dashboard environment, and uses fresh tenant-owned ids so multiple demo
+workspaces can coexist. Verified: first seed succeeds, repeating the same id
+fails safely, and a second new workspace succeeds. The dashboard README now
+documents this no-Docker setup.
 
 **Update (this session):** Agent detail page, Leads (list + kanban +
 detail), and the `vehicleCount` → `qualificationMetric` genericization
