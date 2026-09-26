@@ -347,6 +347,77 @@ export async function createAgentProfile(input: {
   return agentId;
 }
 
+function requireWorkspaceManager(member: { role: "owner" | "admin" | "agent" }): void {
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can change workspace setup");
+  }
+}
+
+export async function createOnboardingStep(input: {
+  code: string;
+  label: string;
+  required: boolean;
+}): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const code = input.code.trim().toLowerCase();
+  const label = input.label.trim();
+  if (!/^[a-z][a-z0-9_]*$/.test(code)) {
+    throw new Error("step code must start with a letter and use lowercase letters, numbers, or underscores");
+  }
+  if (!label) throw new Error("step label is required");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const order = await client.query<{ next_order: number }>(
+      "select coalesce(max(sort_order), -1) + 1 as next_order from tandem.onboarding_steps where workspace_id = $1",
+      [WORKSPACE_ID]
+    );
+    await client.query(
+      `insert into tandem.onboarding_steps (workspace_id, code, label, required, sort_order)
+       values ($1, $2, $3, $4, $5)`,
+      [WORKSPACE_ID, code, label, input.required, order.rows[0].next_order]
+    );
+  });
+  revalidatePath("/");
+  revalidatePath("/agents");
+  revalidatePath("/settings/setup");
+}
+
+export async function createTerritory(input: { name: string; code: string }): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  if (!name) throw new Error("territory name is required");
+  if (!/^[A-Z0-9_-]+$/.test(code)) throw new Error("territory code must use uppercase letters, numbers, hyphens, or underscores");
+
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.territories (workspace_id, name, code)
+       values ($1, $2, $3)`,
+      [WORKSPACE_ID, name, code]
+    )
+  );
+  revalidatePath("/settings/setup");
+  revalidatePath("/settings/routing");
+}
+
+export async function assignAgentToTerritory(agentId: string, territoryId: string): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.agent_territories (workspace_id, agent_id, territory_id)
+       values ($1, $2, $3)
+       on conflict do nothing`,
+      [WORKSPACE_ID, agentId, territoryId]
+    )
+  );
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${agentId}`);
+  revalidatePath("/settings/setup");
+}
+
 export async function setRoutingStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, (client) =>

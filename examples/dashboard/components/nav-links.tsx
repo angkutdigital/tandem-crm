@@ -9,6 +9,7 @@ import {
   Scale,
   UserCog,
   Users,
+  Settings2,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -23,7 +24,7 @@ import {
 } from "@/components/ui/sidebar";
 import type { TandemMember } from "tandem-crm";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; ownerOnly?: boolean };
+type NavItem = { href: string; label: string; icon: LucideIcon; ownerOnly?: boolean; managerOnly?: boolean };
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   // Routing policy is an owner-level decision; see app/settings/routing/page.tsx's
   // own server-side check for why this isn't just a client-side nicety.
   { href: "/settings/routing", label: "Routing", icon: Route, ownerOnly: true },
+  { href: "/settings/setup", label: "Workspace setup", icon: Settings2, managerOnly: true },
 ];
 
 function isActiveHref(pathname: string, href: string) {
@@ -44,7 +46,10 @@ function isActiveHref(pathname: string, href: string) {
 
 export function NavLinks({ role }: { role: TandemMember["role"] }) {
   const pathname = usePathname();
-  const items = NAV_ITEMS.filter((item) => !item.ownerOnly || role === "owner");
+  const items = NAV_ITEMS.filter((item) =>
+    (!item.ownerOnly || role === "owner") &&
+    (!item.managerOnly || role === "owner" || role === "admin")
+  );
 
   return (
     <SidebarGroup>

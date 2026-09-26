@@ -10,9 +10,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AgentTerritoryManager } from "@/components/agent-territory-manager";
 import {
   getAgentDetail,
+  getAgentTerritoryIds,
   getOnboardingSteps,
+  getTerritories,
   requireCurrentMember,
 } from "@/lib/queries";
 import { reopenAgentCertification } from "@/lib/actions";
@@ -43,9 +46,10 @@ function formatDate(value: string) {
 export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) {
   const { id } = await props.params;
   const member = await requireCurrentMember();
-  const [agent, steps] = await Promise.all([
+  const [agent, steps, territories] = await Promise.all([
     getAgentDetail(member.userId, id),
     getOnboardingSteps(member.userId),
+    getTerritories(member.userId),
   ]);
 
   if (!agent) {
@@ -61,6 +65,9 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
   }
 
   const requiredSteps = steps.filter((step) => step.required);
+  const assignedTerritoryIds = await getAgentTerritoryIds(member.userId, agent.id);
+  const assignedTerritories = territories.filter((territory) => assignedTerritoryIds.includes(territory.id));
+  const canManageWorkspace = member.role === "owner" || member.role === "admin";
   const completedRequired = requiredSteps.filter((step) =>
     agent.completedStepCodes.includes(step.code)
   ).length;
@@ -151,6 +158,32 @@ export default async function AgentDetailPage(props: PageProps<"/agents/[id]">) 
               })}
             </ul>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Territory coverage</CardTitle>
+          <CardDescription>
+            Automatic routing considers this agent only for leads in the territories listed here.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {assignedTerritories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No territory coverage yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {assignedTerritories.map((territory) => (
+                <Badge key={territory.id} variant="secondary">{territory.name} · {territory.code}</Badge>
+              ))}
+            </div>
+          )}
+          <AgentTerritoryManager
+            agentId={agent.id}
+            territories={territories}
+            assignedTerritoryIds={assignedTerritoryIds}
+            canManage={canManageWorkspace}
+          />
         </CardContent>
       </Card>
 

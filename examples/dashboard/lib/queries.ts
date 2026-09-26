@@ -134,6 +134,41 @@ export async function getOnboardingSteps(userId: string): Promise<OnboardingStep
   return result.rows.map((row) => ({ code: row.code, label: row.label, required: row.required, sortOrder: row.sort_order }));
 }
 
+export type TerritorySummary = { id: string; name: string; code: string; active: boolean; agentCount: number };
+
+export async function getTerritories(userId: string): Promise<TerritorySummary[]> {
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; name: string; code: string; active: boolean; agent_count: string;
+    }>(
+      `select t.id, t.name, t.code, t.active,
+              count(at.agent_id) as agent_count
+       from tandem.territories t
+       left join tandem.agent_territories at
+         on at.workspace_id = t.workspace_id and at.territory_id = t.id
+       where t.workspace_id = $1
+       group by t.id, t.name, t.code, t.active
+       order by t.name`,
+      [WORKSPACE_ID]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id, name: row.name, code: row.code, active: row.active,
+    agentCount: Number(row.agent_count),
+  }));
+}
+
+export async function getAgentTerritoryIds(userId: string, agentId: string): Promise<string[]> {
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ territory_id: string }>(
+      `select territory_id from tandem.agent_territories
+       where workspace_id = $1 and agent_id = $2 order by territory_id`,
+      [WORKSPACE_ID, agentId]
+    )
+  );
+  return result.rows.map((row) => row.territory_id);
+}
+
 export type AgentDetail = {
   id: string;
   displayName: string;

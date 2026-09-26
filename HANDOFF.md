@@ -25,6 +25,23 @@ next work is Nest's production-readiness workflow, not another domain module.
   This is higher value than cosmetic dashboard work because it removes the
   remaining manual database configuration from a new workspace's first run.
 
+### Nest workspace setup complete
+
+- Added **Workspace setup** for owners/admins: add onboarding requirements and
+  add territories directly from the dashboard. The current list is rendered
+  alongside each form so a new workspace's operating configuration is visible.
+- Added territory coverage management to each agent profile. A manager can add
+  an active territory to the agent, creating the actual candidate pool used by
+  automatic routing. The local demo verified a new required step, an East
+  Coast territory, and coverage on the newly-created demo agent; browser
+  console errors remained empty.
+- Expanded the disposable-Postgres suite again: manager-only territory creation
+  and coverage assignment, agent denial, and cross-workspace isolation are now
+  asserted. All existing 15 migrations and 89 package tests still pass.
+- **Next Nest slice:** commission-rule setup and host-auth membership linking.
+  Those are the two remaining configuration pieces before a new workspace can
+  operate its full lead → commission workflow without direct SQL.
+
 ### Coaster checkpoint complete
 
 - The agreed financial rule is now fully represented: an outcome may create a

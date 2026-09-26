@@ -57,6 +57,7 @@ async function main() {
   const onboardingStepA = randomUUID();
   const trailEntryA = randomUUID();
   const adminCreatedAgentA = randomUUID();
+  const territoryA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -289,6 +290,56 @@ async function main() {
     client.query("select id from tandem.agents where id = $1", [adminCreatedAgentA])
   );
   check("workspace B's owner cannot read workspace A's agent profile", crossTenantAgentRead.rows.length === 0);
+
+  // Nest's territory setup and coverage controls use the same manager-only
+  // configuration policy as the rest of Core. Routing candidates depend on
+  // these rows, so test the boundary directly rather than trusting the UI.
+  const adminTerritoryCreate = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      "insert into tandem.territories (id, workspace_id, name, code) values ($1, $2, 'CI Territory', 'CI-TERRITORY')",
+      [territoryA, workspaceA]
+    )
+  );
+  check("a workspace admin can create a territory", adminTerritoryCreate.rowCount === 1);
+
+  let agentTerritoryCreateBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        "insert into tandem.territories (workspace_id, name, code) values ($1, 'Agent Territory', 'AGENT-TERRITORY')",
+        [workspaceA]
+      )
+    );
+  } catch {
+    agentTerritoryCreateBlocked = true;
+  }
+  check("an agent cannot create a territory", agentTerritoryCreateBlocked);
+
+  const adminCoverage = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      "insert into tandem.agent_territories (workspace_id, agent_id, territory_id) values ($1, $2, $3)",
+      [workspaceA, adminCreatedAgentA, territoryA]
+    )
+  );
+  check("a workspace admin can assign territory coverage", adminCoverage.rowCount === 1);
+
+  let agentCoverageBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        "insert into tandem.agent_territories (workspace_id, agent_id, territory_id) values ($1, $2, $3)",
+        [workspaceA, agentA, territoryA]
+      )
+    );
+  } catch {
+    agentCoverageBlocked = true;
+  }
+  check("an agent cannot assign their own territory coverage", agentCoverageBlocked);
+
+  const crossTenantTerritoryRead = await withTandemSession(pool, userB, (client) =>
+    client.query("select id from tandem.territories where id = $1", [territoryA])
+  );
+  check("workspace B's owner cannot read workspace A's territory", crossTenantTerritoryRead.rows.length === 0);
 
   // Ramp's template is admin-managed; the agent owns the normal progress
   // events for their own profile, while an explicit reopening of a past
