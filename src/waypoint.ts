@@ -1,6 +1,6 @@
-export type RoutingStrategy = "round_robin" | "least_loaded" | "manual";
+export type WaypointStrategy = "round_robin" | "least_loaded" | "manual";
 
-export type RoutingCandidate = {
+export type WaypointCandidate = {
   agentId: string;
   openLeadCount: number;
 };
@@ -17,11 +17,11 @@ function assertOpenLeadCount(openLeadCount: number): void {
   }
 }
 
-function assertCandidates(candidates: readonly RoutingCandidate[]): void {
+function assertCandidates(candidates: readonly WaypointCandidate[]): void {
   const seen = new Set<string>();
   for (const candidate of candidates) {
     if (!candidate.agentId.trim()) throw new Error("agentId is required");
-    if (seen.has(candidate.agentId)) throw new Error("routing candidates must have unique agentId values");
+    if (seen.has(candidate.agentId)) throw new Error("waypoint candidates must have unique agentId values");
     seen.add(candidate.agentId);
     assertOpenLeadCount(candidate.openLeadCount);
   }
@@ -33,8 +33,8 @@ function assertCandidates(candidates: readonly RoutingCandidate[]): void {
  * and appends the lead.assigned event itself.
  */
 export function selectAgentForLead(
-  candidates: readonly RoutingCandidate[],
-  strategy: RoutingStrategy,
+  candidates: readonly WaypointCandidate[],
+  strategy: WaypointStrategy,
   lastAssignedAgentId: string | null,
 ): string | null {
   if (candidates.length === 0) return null;
@@ -68,5 +68,5 @@ export function selectAgentForLead(
     return sorted[(lastIndex + 1) % sorted.length].agentId;
   }
 
-  throw new Error(`unsupported routing strategy: ${strategy}`);
+  throw new Error(`unsupported waypoint strategy: ${strategy}`);
 }
