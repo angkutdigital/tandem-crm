@@ -168,10 +168,10 @@ export function LeadsKanbanBoard({ leads }: { leads: LeadSummary[] }) {
       onValueChange={handleValueChange}
       getItemValue={(lead) => lead.id}
     >
-      <KanbanBoard className="grid auto-rows-fr grid-cols-4">
+      <KanbanBoard className="flex gap-4 overflow-x-auto pb-2">
         {PIPELINE_STATUSES.map((status) => (
-          <KanbanColumn key={status} value={status}>
-            <div className="flex items-center justify-between px-0.5 pb-3">
+          <KanbanColumn key={status} value={status} className="flex w-72 shrink-0 flex-col gap-3">
+            <div className="flex items-center justify-between px-0.5">
               <h3 className="text-sm font-medium">{humanizeStatus(status)}</h3>
               <span className="text-xs tabular-nums text-muted-foreground">
                 {columns[status]?.length ?? 0}
