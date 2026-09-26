@@ -86,7 +86,44 @@ describe("Tandem escrow and money", () => {
     const approved = [...paidLead(), fact(6, "commission.eligible", { payoutId: "payout-1" }, releaseAt), fact(7, "commission.approved", { payoutId: "payout-1" }, releaseAt)];
     expect(replay([...approved, fact(8, "commission.voided", { payoutId: "payout-1", reason: "dispute" }, releaseAt)])?.commission?.status).toBe("voided");
     const settled = [...approved, fact(8, "commission.paid", { payoutId: "payout-1", payoutReference: "manual-1" }, releaseAt)];
-    expect(() => replay([...settled, fact(9, "payment.refunded", { reason: "late refund" }, releaseAt)])).toThrow("invalid transition");
+    const lateRefund = replay([...settled, fact(9, "payment.refunded", { reason: "late refund" }, releaseAt)]);
+    expect(lateRefund).toMatchObject({
+      status: "Refunded",
+      commission: { status: "paid", clawback: { amountMinor: 1_000, reason: "payment refunded after payout" } },
+    });
+  });
+  it("records a clawback obligation without reversing a paid commission, and never twice", () => {
+    const approved = [...paidLead(), fact(6, "commission.eligible", { payoutId: "payout-1" }, releaseAt), fact(7, "commission.approved", { payoutId: "payout-1" }, releaseAt)];
+    const paid = [...approved, fact(8, "commission.paid", { payoutId: "payout-1", payoutReference: "manual-1" }, releaseAt)];
+    expect(() => replay([...paidLead(), fact(6, "commission.clawback_requested", { payoutId: "payout-1", amountMinor: 500, reason: "overpaid" })])).toThrow("invalid transition");
+    const clawed = replay([...paid, fact(9, "commission.clawback_requested", { payoutId: "payout-1", amountMinor: 400, reason: "overpaid" }, releaseAt)]);
+    expect(clawed).toMatchObject({ status: "Commission_Paid", commission: { status: "paid", amountMinor: 1_000, clawback: { amountMinor: 400, reason: "overpaid" } } });
+    expect(() => replay([...paid, fact(9, "commission.clawback_requested", { payoutId: "payout-1", amountMinor: 0, reason: "overpaid" }, releaseAt)])).toThrow("must be a positive integer");
+    expect(() => replay([...paid, fact(9, "commission.clawback_requested", { payoutId: "payout-1", amountMinor: 2_000, reason: "overpaid" }, releaseAt)])).toThrow("must be a positive integer");
+    expect(() =>
+      replay([...paid,
+        fact(9, "commission.clawback_requested", { payoutId: "payout-1", amountMinor: 400, reason: "overpaid" }, releaseAt),
+        fact(10, "commission.clawback_requested", { payoutId: "payout-1", amountMinor: 100, reason: "again" }, releaseAt),
+      ])
+    ).toThrow("invalid transition");
+  });
+  it("adjusts an unpaid commission's amount, but not a paid one", () => {
+    const adjusted = replay([...paidLead(), fact(6, "commission.adjusted", { payoutId: "payout-1", newAmountMinor: 1_500 })]);
+    expect(adjusted).toMatchObject({ commission: { status: "held", amountMinor: 1_500 } });
+    expect(() => replay([...paidLead(), fact(6, "commission.adjusted", { payoutId: "payout-1", newAmountMinor: 20_000 })])).toThrow("invalid adjusted commission amount");
+    const approved = [...paidLead(), fact(6, "commission.eligible", { payoutId: "payout-1" }, releaseAt), fact(7, "commission.approved", { payoutId: "payout-1" }, releaseAt)];
+    const paid = [...approved, fact(8, "commission.paid", { payoutId: "payout-1", payoutReference: "manual-1" }, releaseAt)];
+    expect(() => replay([...paid, fact(9, "commission.adjusted", { payoutId: "payout-1", newAmountMinor: 500 }, releaseAt)])).toThrow("invalid transition");
+  });
+  it("reinstates a voided commission with a fresh amount and release date, but not a refunded lead's", () => {
+    const approved = [...paidLead(), fact(6, "commission.eligible", { payoutId: "payout-1" }, releaseAt), fact(7, "commission.approved", { payoutId: "payout-1" }, releaseAt)];
+    const voided = [...approved, fact(8, "commission.voided", { payoutId: "payout-1", reason: "dispute" }, releaseAt)];
+    const reinstatedAt = "2026-03-01T00:00:00.000Z";
+    const reinstated = replay([...voided, fact(9, "commission.reinstated", { payoutId: "payout-1", amountMinor: 900, releaseAt: reinstatedAt }, releaseAt)]);
+    expect(reinstated).toMatchObject({ status: "Commission_Hold", commission: { status: "held", amountMinor: 900, releaseAt: reinstatedAt, clawback: null } });
+    expect(() => replay([...voided, fact(9, "commission.reinstated", { payoutId: "payout-1", amountMinor: 900, releaseAt: "2025-12-31T00:00:00.000Z" }, releaseAt)])).toThrow("invalid commission reinstatement");
+    const refunded = [...paidLead(), fact(6, "payment.refunded", { reason: "full refund" })];
+    expect(() => replay([...refunded, fact(7, "commission.reinstated", { payoutId: "payout-1", amountMinor: 900, releaseAt: reinstatedAt })])).toThrow("invalid transition");
   });
   it("rounds integer basis points half-up and rejects unsafe or negative money", () => {
     expect(calculateCommissionMinor(99, 50)).toBe(0);

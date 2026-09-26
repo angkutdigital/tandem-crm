@@ -10,11 +10,14 @@
 --
 -- Scope of this first slice: opening a dispute, an operator asking for more
 -- information, and an operator resolving it as upheld or dismissed. Resolving
--- a dispute only records the outcome; it does not itself create a
--- replacement commission, adjust an amount, or claw back a paid commission,
--- the same "the engine never touches money" split Core already draws for
--- commission.held. What to actually do about an upheld dispute, and a
--- scheduled function that auto-resolves overdue ones, are follow-up work.
+-- a dispute only records the outcome here; it does not itself append a
+-- commission.adjusted, commission.reinstated, or commission.clawback_requested
+-- event into Core's own log, the same "the engine never touches money" split
+-- Core already draws for commission.held. Acting on an upheld outcome is a
+-- separate, explicit event the host app appends to tandem.events after
+-- reading this dispute's category and outcome (see domain.ts's comment above
+-- those three event types). A scheduled function that auto-resolves overdue
+-- disputes is still follow-up work.
 
 create table tandem.dispute_events (
   sequence bigint generated always as identity primary key,

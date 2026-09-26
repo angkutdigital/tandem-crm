@@ -25,9 +25,19 @@ for the current state).
 - Ramp: agent onboarding step tracking and certification, with its own
   event log and reducer.
 - Coaster: partner-initiated commission disputes (`untracked`, `incorrect`,
-  `declined`) and operator-only resolution, enforced by RLS. Resolving a
-  dispute records the outcome only; it does not yet execute a clawback or
-  create a replacement commission.
+  `declined`) and operator-only resolution, enforced by RLS.
+- Domain events for acting on an upheld dispute: `commission.adjusted`
+  (correct an unpaid commission's amount), `commission.reinstated` (bring a
+  voided commission back to `held` with a fresh amount and release date),
+  and `commission.clawback_requested` (record money owed back on a
+  commission already paid, without Tandem reversing the payment itself).
+  `payment.refunded` on an already-paid commission now records a clawback
+  instead of refusing the transition. Coaster still only records a dispute's
+  outcome; appending one of these three events is a separate step the host
+  app takes, matching the "engine never touches money" split everywhere
+  else. Wiring these into the `tandem.payouts` projection needs its own
+  RLS/grants decision, same open gap as the existing approve/pay/void
+  transitions, which also have no `authenticated`-role UPDATE path today.
 - A reference dashboard example (`examples/dashboard`, Next.js + shadcn/ui)
   demonstrating a real consumer of the package.
 - An automated RLS check (`scripts/ci-rls-check.mjs`) that runs on every
