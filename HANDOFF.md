@@ -3,6 +3,43 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): Coaster resolution path verified and fixed
+
+Work happened on `codex/coaster-resolution-verification`, based on
+`claude/nest-trail-build`.
+
+- **Verified live against a fresh, isolated Postgres instance:** the Nest
+  dashboard loaded with seeded data; an owner resolved an upheld dispute on
+  an unpaid commission and applied an amount adjustment; a second upheld
+  dispute on a paid commission created a clawback request. The detail page
+  displayed the updated payout amount/status and the recorded clawback.
+- **Fixed a real projection bug in `examples/dashboard/lib/actions.ts`:**
+  `executeDisputeOutcome()` appended its Core event, but the common
+  `appendLeadEvent()` writer did not update `tandem.payouts` or append its
+  audit-ledger row. The UI could therefore report an action as applied while
+  the payout projection kept the old data. The writer now locks and updates
+  the payout projection from the reducer result and records the event in
+  `tandem.payout_ledger`, in the same transaction.
+- **Added outcome idempotency:** the same resolved dispute now has one stable
+  `coaster-dispute` source-event key. Retrying the form created neither a
+  second Core event nor a second ledger row (confirmed against the database).
+  The dashboard also replaces the action form with an explicit “already
+  applied” state once that event exists.
+- **Checks passed:** root `npm test` (87 tests) and root typecheck. The
+  dashboard production build passed after the outcome-writing change; the
+  later display-only state change was live-verified in a browser. Subsequent
+  build attempts hit the host's Turbopack port-binding restriction, not a
+  TypeScript or application error.
+
+### Known demo-tooling follow-up
+
+`examples/dashboard/scripts/seed.mjs` claims it is re-seedable but attempts
+to `delete` from the intentionally append-only `tandem.events` table; its
+trigger correctly rejects that deletion. A fresh database seeds successfully.
+Do not describe repeat seeding as supported until this script is redesigned
+for append-only data (for example, a new demo workspace per run or an
+explicitly disposable database reset).
+
 **Update (this session):** Agent detail page, Leads (list + kanban +
 detail), and the `vehicleCount` → `qualificationMetric` genericization
 below are all now DONE (see "Where things stand" and the gotchas list,

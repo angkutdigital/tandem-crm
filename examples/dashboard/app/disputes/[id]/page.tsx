@@ -69,7 +69,7 @@ export default async function DisputeDetailPage(props: PageProps<"/disputes/[id]
 
   const isManager = member.role === "owner" || member.role === "admin";
   const isOpen = dispute.status === "open" || dispute.status === "queried";
-  const canExecute = dispute.status === "resolved" && dispute.outcome === "upheld";
+  const canExecute = dispute.status === "resolved" && dispute.outcome === "upheld" && !dispute.outcomeApplied;
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
@@ -185,6 +185,8 @@ export default async function DisputeDetailPage(props: PageProps<"/disputes/[id]
                 ? "Ask the partner for more information, or resolve the dispute."
                 : canExecute
                   ? "Apply the outcome of this upheld dispute."
+                  : dispute.outcomeApplied
+                    ? "This upheld dispute's outcome has already been applied."
                   : "This dispute is resolved; no further action is available."}
             </CardDescription>
           </CardHeader>
@@ -196,6 +198,10 @@ export default async function DisputeDetailPage(props: PageProps<"/disputes/[id]
               </>
             ) : canExecute ? (
               <ExecuteOutcomeForm disputeId={dispute.id} />
+            ) : dispute.outcomeApplied ? (
+              <p className="text-sm text-muted-foreground">
+                The outcome has already been applied to the payout.
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">
                 Resolved: {dispute.outcome}

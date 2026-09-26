@@ -52,7 +52,8 @@ async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): 
 async function appendLeadEvent(
   leadId: string,
   type: TandemEvent["type"],
-  data: TandemEvent["data"]
+  data: TandemEvent["data"],
+  idempotency?: { source: string; sourceEventId: string }
 ): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, async (client) => {
@@ -60,7 +61,9 @@ async function appendLeadEvent(
     const nextSequence = existing.length > 0 ? existing[existing.length - 1].sequence + 1 : 1;
     const newEvent = {
       id: randomUUID(), sequence: nextSequence, workspaceId: WORKSPACE_ID, leadId,
-      source: "dashboard", sourceEventId: `dashboard-${randomUUID()}`, occurredAt: new Date().toISOString(),
+      source: idempotency?.source ?? "dashboard",
+      sourceEventId: idempotency?.sourceEventId ?? `dashboard-${randomUUID()}`,
+      occurredAt: new Date().toISOString(),
       type, data,
     } as TandemEvent;
 
@@ -94,6 +97,55 @@ async function appendLeadEvent(
           state.commission.amountMinor, state.commission.currency, state.payment!.confirmedAt,
           state.commission.releaseAt, state.commission.status, newEvent.id,
         ]
+      );
+      await client.query(
+        `insert into tandem.payout_ledger
+           (workspace_id, payout_id, event_id, from_status, to_status)
+         values ($1, $2, $3, null, $4)`,
+        [WORKSPACE_ID, state.commission.payoutId, newEvent.id, state.commission.status]
+      );
+    } else if (state.commission) {
+      // A payout is a rebuildable projection, just like a lead. The event
+      // above is the source of truth; this row must reflect the reducer's
+      // resulting commission state in the same transaction or the dashboard
+      // can claim an upheld dispute was applied while the money projection
+      // still shows its old amount/status.
+      const payoutResult = await client.query<{ status: string }>(
+        `select status from tandem.payouts
+         where id = $1 and workspace_id = $2
+         for update`,
+        [state.commission.payoutId, WORKSPACE_ID]
+      );
+      const payout = payoutResult.rows[0];
+      if (!payout) throw new Error("commission has no payout projection");
+
+      const clawback = state.commission.clawback;
+      await client.query(
+        `update tandem.payouts
+         set amount_minor = $3,
+             release_at = $4,
+             status = $5,
+             last_event_id = $6,
+             approved_at = case when $5 = 'approved' then coalesce(approved_at, $7) else approved_at end,
+             paid_at = case when $5 = 'paid' then coalesce(paid_at, $7) else paid_at end,
+             voided_at = case when $5 = 'voided' then coalesce(voided_at, $7) else voided_at end,
+             clawback_amount_minor = $8,
+             clawback_reason = $9,
+             clawback_requested_at = $10,
+             updated_at = now()
+         where id = $1 and workspace_id = $2`,
+        [
+          state.commission.payoutId, WORKSPACE_ID, state.commission.amountMinor,
+          state.commission.releaseAt, state.commission.status, newEvent.id,
+          newEvent.occurredAt, clawback?.amountMinor ?? null,
+          clawback?.reason ?? null, clawback?.requestedAt ?? null,
+        ]
+      );
+      await client.query(
+        `insert into tandem.payout_ledger
+           (workspace_id, payout_id, event_id, from_status, to_status)
+         values ($1, $2, $3, $4, $5)`,
+        [WORKSPACE_ID, state.commission.payoutId, newEvent.id, payout.status, state.commission.status]
       );
     }
   });
@@ -396,7 +448,11 @@ export async function executeDisputeOutcome(
   reasonOrReleaseAt: string
 ): Promise<void> {
   const member = await requireCurrentMember();
-  const { leadId, payoutId } = await withTandemSession(pool, member.userId, async (client) => {
+  const idempotency = {
+    source: "coaster-dispute",
+    sourceEventId: `dispute:${disputeId}:outcome`,
+  };
+  const result = await withTandemSession(pool, member.userId, async (client) => {
     const result = await client.query<{ lead_id: string; payout_id: string; status: string; outcome: string | null }>(
       `select lead_id, payout_id, status, outcome from tandem.disputes where id = $1`,
       [disputeId]
@@ -404,19 +460,30 @@ export async function executeDisputeOutcome(
     const row = result.rows[0];
     if (!row) throw new Error("dispute not found");
     if (row.status !== "resolved" || row.outcome !== "upheld") throw new Error("only an upheld, resolved dispute can be acted on");
-    return { leadId: row.lead_id, payoutId: row.payout_id };
+    const alreadyApplied = await client.query(
+      `select 1 from tandem.events
+       where workspace_id = $1 and source = $2 and source_event_id = $3`,
+      [WORKSPACE_ID, idempotency.source, idempotency.sourceEventId]
+    );
+    return { leadId: row.lead_id, payoutId: row.payout_id, alreadyApplied: (alreadyApplied.rowCount ?? 0) > 0 };
   });
+
+  // A resolved dispute gets one explicit execution. Repeating a browser
+  // submit or retrying a server action must not append a second adjustment,
+  // reinstatement, or clawback for the same operator decision.
+  if (result.alreadyApplied) return;
+  const { leadId, payoutId } = result;
 
   if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error("amount must be a positive integer");
 
   if (action === "adjust") {
-    await appendLeadEvent(leadId, "commission.adjusted", { payoutId, newAmountMinor: amountMinor });
+    await appendLeadEvent(leadId, "commission.adjusted", { payoutId, newAmountMinor: amountMinor }, idempotency);
   } else if (action === "reinstate") {
     if (!reasonOrReleaseAt.trim()) throw new Error("a release date is required to reinstate");
-    await appendLeadEvent(leadId, "commission.reinstated", { payoutId, amountMinor, releaseAt: reasonOrReleaseAt });
+    await appendLeadEvent(leadId, "commission.reinstated", { payoutId, amountMinor, releaseAt: reasonOrReleaseAt }, idempotency);
   } else {
     if (!reasonOrReleaseAt.trim()) throw new Error("a reason is required to request a clawback");
-    await appendLeadEvent(leadId, "commission.clawback_requested", { payoutId, amountMinor, reason: reasonOrReleaseAt });
+    await appendLeadEvent(leadId, "commission.clawback_requested", { payoutId, amountMinor, reason: reasonOrReleaseAt }, idempotency);
   }
 }
 

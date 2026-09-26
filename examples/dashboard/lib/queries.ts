@@ -345,6 +345,7 @@ export type DisputeDetail = DisputeSummary & {
   payoutCurrency: string;
   payoutStatus: string;
   payoutClawbackAmountMinor: number | null;
+  outcomeApplied: boolean;
   events: Array<{ id: string; type: string; payload: Record<string, unknown>; occurredAt: string }>;
 };
 
@@ -356,12 +357,20 @@ export async function getDisputeDetail(userId: string, disputeId: string): Promi
       opened_by_agent_name: string; opened_at: string; auto_approve_at: string;
       expected_amount_minor: number | null; description: string; resolution_note: string | null;
       payout_amount_minor: string; payout_currency: string; payout_status: string; payout_clawback_amount_minor: string | null;
+      outcome_applied: boolean;
     }>(
       `select d.id, d.lead_id, l.company_name, d.payout_id, d.category, d.status, d.outcome,
               a.display_name as opened_by_agent_name, d.opened_at, d.auto_approve_at,
               d.expected_amount_minor, d.description, d.resolution_note,
               p.amount_minor as payout_amount_minor, p.currency as payout_currency,
-              p.status as payout_status, p.clawback_amount_minor as payout_clawback_amount_minor
+              p.status as payout_status, p.clawback_amount_minor as payout_clawback_amount_minor,
+              exists (
+                select 1 from tandem.events e
+                where e.workspace_id = d.workspace_id
+                  and e.lead_id = d.lead_id
+                  and e.source = 'coaster-dispute'
+                  and e.source_event_id = 'dispute:' || d.id::text || ':outcome'
+              ) as outcome_applied
        from tandem.disputes d
        join tandem.leads l on l.id = d.lead_id
        join tandem.agents a on a.id = d.opened_by_agent_id
@@ -384,6 +393,7 @@ export async function getDisputeDetail(userId: string, disputeId: string): Promi
       expectedAmountMinor: dispute.expected_amount_minor, description: dispute.description, resolutionNote: dispute.resolution_note,
       payoutAmountMinor: Number(dispute.payout_amount_minor), payoutCurrency: dispute.payout_currency, payoutStatus: dispute.payout_status,
       payoutClawbackAmountMinor: dispute.payout_clawback_amount_minor === null ? null : Number(dispute.payout_clawback_amount_minor),
+      outcomeApplied: dispute.outcome_applied,
       events: eventsResult.rows.map((r) => ({ id: r.id, type: r.event_type, payload: r.payload, occurredAt: toISO(r.occurred_at) })),
     };
   });
