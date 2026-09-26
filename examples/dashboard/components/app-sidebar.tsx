@@ -14,6 +14,7 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { currentMember } from "@/lib/queries";
+import { isDemoAuth } from "@/lib/auth";
 
 export async function AppSidebar() {
   const member = await currentMember();
@@ -45,7 +46,7 @@ export async function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <UserSwitcher currentMember={member} />
+        <UserSwitcher currentMember={member} demoMode={isDemoAuth} />
       </SidebarFooter>
 
       <SidebarRail />

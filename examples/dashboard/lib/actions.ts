@@ -28,8 +28,8 @@ async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): 
     source: string; source_event_id: string;
   }>(
     `select id, sequence, event_type, payload, occurred_at, source, source_event_id
-     from tandem.events where lead_id = $1 order by sequence`,
-    [leadId]
+     from tandem.events where lead_id = $1 and workspace_id = $2 order by sequence`,
+    [leadId, WORKSPACE_ID]
   );
   return result.rows.map((row) => ({
     // sequence is bigint in Postgres, which node-postgres returns as a
@@ -83,8 +83,8 @@ async function appendLeadEvent(
       `update tandem.leads
        set pipeline_status = $2, assignee_id = coalesce($3, assignee_id), territory_id = coalesce($4, territory_id),
            last_event_sequence = $5, updated_at = now()
-       where id = $1`,
-      [leadId, state.status, state.agentId, state.territoryId, state.lastSequence]
+       where id = $1 and workspace_id = $6`,
+      [leadId, state.status, state.agentId, state.territoryId, state.lastSequence, WORKSPACE_ID]
     );
 
     if (state.commission && type === "commission.held") {
@@ -198,8 +198,8 @@ export async function assignLead(leadId: string, agentId?: string): Promise<void
 
   await withTandemSession(pool, member.userId, async (client) => {
     const leadRow = await client.query<{ territory_id: string | null; assignee_id: string | null }>(
-      `select territory_id, assignee_id from tandem.leads where id = $1`,
-      [leadId]
+      `select territory_id, assignee_id from tandem.leads where id = $1 and workspace_id = $2`,
+      [leadId, WORKSPACE_ID]
     );
     territoryId = leadRow.rows[0]?.territory_id ?? null;
 
@@ -209,12 +209,13 @@ export async function assignLead(leadId: string, agentId?: string): Promise<void
       const candidatesResult = await client.query<{ agent_id: string; open_lead_count: string }>(
         `select at.agent_id, (
            select count(*) from tandem.leads l
-           where l.assignee_id = at.agent_id and l.pipeline_status not in ('Commission_Paid', 'Lost', 'Refunded')
+           where l.workspace_id = at.workspace_id and l.assignee_id = at.agent_id
+             and l.pipeline_status not in ('Commission_Paid', 'Lost', 'Refunded')
          ) as open_lead_count
          from tandem.agent_territories at
-         join tandem.agents a on a.id = at.agent_id and a.active
-         where at.territory_id = $1`,
-        [territoryId]
+         join tandem.agents a on a.id = at.agent_id and a.workspace_id = at.workspace_id and a.active
+         where at.territory_id = $1 and at.workspace_id = $2`,
+        [territoryId, WORKSPACE_ID]
       );
       const candidates = candidatesResult.rows.map((r) => ({ agentId: r.agent_id, openLeadCount: Number(r.open_lead_count) }));
       resolvedAgentId = selectAgentForLead(candidates, strategy, leadRow.rows[0]?.assignee_id ?? null);
@@ -231,8 +232,8 @@ async function loadAgentEvents(client: import("pg").PoolClient, agentId: string)
     source: string; source_event_id: string;
   }>(
     `select id, sequence, event_type, payload, occurred_at, source, source_event_id
-     from tandem.agent_events where agent_id = $1 order by sequence`,
-    [agentId]
+     from tandem.agent_events where agent_id = $1 and workspace_id = $2 order by sequence`,
+    [agentId, WORKSPACE_ID]
   );
   return result.rows.map((row) => ({
     // See loadLeadEvents: sequence is bigint (returned as a string) and
@@ -374,8 +375,8 @@ async function loadDisputeEvents(client: import("pg").PoolClient, disputeId: str
     source: string; source_event_id: string; lead_id: string; payout_id: string;
   }>(
     `select id, sequence, event_type, payload, occurred_at, source, source_event_id, lead_id, payout_id
-     from tandem.dispute_events where dispute_id = $1 order by sequence`,
-    [disputeId]
+     from tandem.dispute_events where dispute_id = $1 and workspace_id = $2 order by sequence`,
+    [disputeId, WORKSPACE_ID]
   );
   return result.rows.map((row) => ({
     id: row.id, sequence: Number(row.sequence), workspaceId: WORKSPACE_ID, disputeId,
@@ -415,8 +416,8 @@ async function appendDisputeEvent(
       `update tandem.disputes
        set status = $2, outcome = $3, resolution_note = coalesce($4, resolution_note),
            last_event_sequence = $5, updated_at = now()
-       where id = $1`,
-      [disputeId, state.status, state.outcome, type === "dispute.resolved" ? (data as { note: string }).note : null, state.lastSequence]
+       where id = $1 and workspace_id = $6`,
+      [disputeId, state.status, state.outcome, type === "dispute.resolved" ? (data as { note: string }).note : null, state.lastSequence, WORKSPACE_ID]
     );
   });
   revalidatePath("/disputes");
@@ -454,8 +455,9 @@ export async function executeDisputeOutcome(
   };
   const result = await withTandemSession(pool, member.userId, async (client) => {
     const result = await client.query<{ lead_id: string; payout_id: string; status: string; outcome: string | null }>(
-      `select lead_id, payout_id, status, outcome from tandem.disputes where id = $1`,
-      [disputeId]
+      `select lead_id, payout_id, status, outcome from tandem.disputes
+       where id = $1 and workspace_id = $2`,
+      [disputeId, WORKSPACE_ID]
     );
     const row = result.rows[0];
     if (!row) throw new Error("dispute not found");
@@ -493,8 +495,8 @@ async function loadTrailEvents(client: import("pg").PoolClient, leadId: string, 
     source: string; source_event_id: string;
   }>(
     `select id, sequence, event_type, payload, occurred_at, source, source_event_id
-     from tandem.trail_events where lead_id = $1 and entry_id = $2 order by sequence`,
-    [leadId, entryId]
+     from tandem.trail_events where lead_id = $1 and entry_id = $2 and workspace_id = $3 order by sequence`,
+    [leadId, entryId, WORKSPACE_ID]
   );
   return result.rows.map((row) => ({
     id: row.id, sequence: Number(row.sequence), workspaceId: WORKSPACE_ID, leadId, entryId,
@@ -572,8 +574,8 @@ async function appendTrailEvent(
       `update tandem.trail_entries
        set channel = $2, confidence_rating = $3, sales_stage = $4, note = $5,
            corrected_at = $6, retracted = $7, last_event_sequence = $8, updated_at = now()
-       where id = $1`,
-      [entryId, state.channel, state.confidenceRating, state.salesStage, state.note, state.correctedAt, state.retracted, state.lastSequence]
+       where id = $1 and workspace_id = $9 and lead_id = $10`,
+      [entryId, state.channel, state.confidenceRating, state.salesStage, state.note, state.correctedAt, state.retracted, state.lastSequence, WORKSPACE_ID, leadId]
     );
   });
   revalidatePath(`/leads/${leadId}`);

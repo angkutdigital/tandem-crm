@@ -44,4 +44,20 @@ existing workspace, because Tandem's event logs are append-only. To make a
 fresh demo, run the seed again and use the newly printed workspace id.
 
 The demo identity switcher exists only for this reference app. A production
-host app supplies its own `TandemAuthAdapter` and real sign-in flow.
+host keeps its existing sign-in flow and wires one verified server-side
+function instead of adding an auth vendor to Tandem:
+
+1. Set `TANDEM_AUTH_MODE=host` in the deployment environment. This disables
+   the demo cookie and identity switcher.
+2. Replace `lib/host-auth.ts`'s `getHostUserId()` with your current auth
+   provider's server-side user-id lookup. Never trust a browser-supplied
+   header or query parameter.
+3. Ensure that stable user id is present in `tandem.members.user_id` for the
+   selected `TANDEM_WORKSPACE_ID`. The package's `TandemAdminAdapter` is the
+   portable membership-provisioning contract.
+4. Keep your own provider's route protection/middleware. Nest deliberately
+   does not ship Clerk, Supabase Auth, Auth0, or another identity SDK.
+
+The default (no `TANDEM_AUTH_MODE`) remains the seed-data demo mode. Host
+mode fails closed until the resolver is wired, preventing a deployment from
+silently running as the demo owner.

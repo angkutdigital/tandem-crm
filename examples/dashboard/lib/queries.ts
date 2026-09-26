@@ -1,7 +1,7 @@
 import { getCurrentTandemMember, type TandemMember } from "tandem-crm";
 import { withTandemSession } from "tandem-crm/db";
 import { pool, WORKSPACE_ID } from "./db";
-import { demoAuthAdapter } from "./auth";
+import { dashboardAuthAdapter } from "./auth";
 
 /** node-postgres parses timestamptz columns into Date objects, not the ISO
  * strings callers of these queries (and tandem-crm's event reducers)
@@ -13,7 +13,7 @@ function toISO(value: string | Date | null): string | null {
 }
 
 export async function currentMember(): Promise<TandemMember | null> {
-  return getCurrentTandemMember(demoAuthAdapter, WORKSPACE_ID);
+  return getCurrentTandemMember(dashboardAuthAdapter, WORKSPACE_ID);
 }
 
 /** Convenience for pages that require a signed-in member; throws otherwise
@@ -30,7 +30,9 @@ export type PipelineCounts = Record<string, number>;
 export async function getPipelineCounts(userId: string): Promise<PipelineCounts> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{ pipeline_status: string; count: string }>(
-      `select pipeline_status, count(*) as count from tandem.leads group by pipeline_status`
+      `select pipeline_status, count(*) as count from tandem.leads
+       where workspace_id = $1 group by pipeline_status`,
+      [WORKSPACE_ID]
     )
   );
   const counts: PipelineCounts = {};
@@ -44,7 +46,8 @@ export async function getPendingPayoutsSummary(userId: string): Promise<PendingP
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{ count: string; total_minor: string | null; currency: string | null }>(
       `select count(*) as count, sum(amount_minor) as total_minor, min(currency) as currency
-       from tandem.payouts where status in ('held', 'eligible')`
+       from tandem.payouts where workspace_id = $1 and status in ('held', 'eligible')`,
+      [WORKSPACE_ID]
     )
   );
   const row = result.rows[0];
@@ -79,7 +82,7 @@ export async function getAgentSummaries(userId: string): Promise<AgentSummary[]>
          s.started_at, s.certified_at,
          coalesce(array_length(nullif(cs.completed, '{}'::text[]), 1), 0) as completed_step_count,
          (select count(*) from tandem.onboarding_steps os where os.workspace_id = a.workspace_id and os.required) as required_step_count,
-         (select count(*) from tandem.leads l where l.assignee_id = a.id
+         (select count(*) from tandem.leads l where l.workspace_id = a.workspace_id and l.assignee_id = a.id
             and l.pipeline_status not in ('Commission_Paid', 'Lost', 'Refunded')) as open_lead_count
        from tandem.agents a
        left join tandem.agent_onboarding_status s on s.workspace_id = a.workspace_id and s.agent_id = a.id
@@ -88,7 +91,9 @@ export async function getAgentSummaries(userId: string): Promise<AgentSummary[]>
          from tandem.agent_events e
          where e.workspace_id = a.workspace_id and e.agent_id = a.id and e.event_type = 'onboarding.step_completed'
        ) cs on true
-       order by a.display_name`
+       where a.workspace_id = $1
+       order by a.display_name`,
+      [WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({
@@ -108,7 +113,9 @@ export type OnboardingStep = { code: string; label: string; required: boolean; s
 export async function getOnboardingSteps(userId: string): Promise<OnboardingStep[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{ code: string; label: string; required: boolean; sort_order: number }>(
-      `select code, label, required, sort_order from tandem.onboarding_steps order by sort_order`
+      `select code, label, required, sort_order from tandem.onboarding_steps
+       where workspace_id = $1 order by sort_order`,
+      [WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({ code: row.code, label: row.label, required: row.required, sortOrder: row.sort_order }));
@@ -133,8 +140,8 @@ export async function getAgentDetail(userId: string, agentId: string): Promise<A
       `select a.id, a.display_name, a.active, s.started_at, s.certified_at
        from tandem.agents a
        left join tandem.agent_onboarding_status s on s.workspace_id = a.workspace_id and s.agent_id = a.id
-       where a.id = $1`,
-      [agentId]
+       where a.id = $1 and a.workspace_id = $2`,
+      [agentId, WORKSPACE_ID]
     );
     const agent = agentResult.rows[0];
     if (!agent) return null;
@@ -142,13 +149,14 @@ export async function getAgentDetail(userId: string, agentId: string): Promise<A
     const stepsResult = await client.query<{ step_code: string }>(
       `select distinct payload->>'stepCode' as step_code
        from tandem.agent_events
-       where agent_id = $1 and event_type = 'onboarding.step_completed'`,
-      [agentId]
+       where agent_id = $1 and workspace_id = $2 and event_type = 'onboarding.step_completed'`,
+      [agentId, WORKSPACE_ID]
     );
 
     const leadsResult = await client.query<{ id: string; company_name: string; pipeline_status: string; updated_at: string }>(
-      `select id, company_name, pipeline_status, updated_at from tandem.leads where assignee_id = $1 order by updated_at desc`,
-      [agentId]
+      `select id, company_name, pipeline_status, updated_at from tandem.leads
+       where assignee_id = $1 and workspace_id = $2 order by updated_at desc`,
+      [agentId, WORKSPACE_ID]
     );
 
     return {
@@ -184,8 +192,10 @@ export async function getLeads(userId: string): Promise<LeadSummary[]> {
       `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
               a.display_name as assignee_name, l.updated_at
        from tandem.leads l
-       left join tandem.agents a on a.id = l.assignee_id
+       left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
+       where l.workspace_id = $1
        order by l.updated_at desc`
+      , [WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({
@@ -208,16 +218,17 @@ export async function getLeadDetail(userId: string, leadId: string): Promise<Lea
       `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
               a.display_name as assignee_name, l.updated_at
        from tandem.leads l
-       left join tandem.agents a on a.id = l.assignee_id
-       where l.id = $1`,
-      [leadId]
+       left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
+       where l.id = $1 and l.workspace_id = $2`,
+      [leadId, WORKSPACE_ID]
     );
     const lead = leadResult.rows[0];
     if (!lead) return null;
 
     const eventsResult = await client.query<{ id: string; event_type: string; payload: Record<string, unknown>; occurred_at: string }>(
-      `select id, event_type, payload, occurred_at from tandem.events where lead_id = $1 order by sequence`,
-      [leadId]
+      `select id, event_type, payload, occurred_at from tandem.events
+       where lead_id = $1 and workspace_id = $2 order by sequence`,
+      [leadId, WORKSPACE_ID]
     );
 
     return {
@@ -248,8 +259,10 @@ export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
     }>(
       `select p.id, p.lead_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at, p.paid_at
        from tandem.payouts p
-       join tandem.leads l on l.id = p.lead_id
-       order by p.release_at desc`
+       join tandem.leads l on l.id = p.lead_id and l.workspace_id = p.workspace_id
+       where p.workspace_id = $1
+       order by p.release_at desc`,
+      [WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({
@@ -263,7 +276,10 @@ export type RoutingStrategy = "round_robin" | "least_loaded" | "manual";
 
 export async function getRoutingStrategy(userId: string): Promise<RoutingStrategy> {
   const result = await withTandemSession(pool, userId, (client) =>
-    client.query<{ strategy: RoutingStrategy }>(`select strategy from tandem.routing_settings limit 1`)
+    client.query<{ strategy: RoutingStrategy }>(
+      `select strategy from tandem.routing_settings where workspace_id = $1 limit 1`,
+      [WORKSPACE_ID]
+    )
   );
   return result.rows[0]?.strategy ?? "round_robin";
 }
@@ -286,10 +302,11 @@ export async function getLeadsPage(userId: string, page: number, pageSize: numbe
       `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.assignee_id,
               a.display_name as assignee_name, l.updated_at, count(*) over () as total_count
        from tandem.leads l
-       left join tandem.agents a on a.id = l.assignee_id
+       left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
+       where l.workspace_id = $1
        order by l.updated_at desc
-       limit $1 offset $2`,
-      [pageSize, offset]
+       limit $2 offset $3`,
+      [WORKSPACE_ID, pageSize, offset]
     )
   );
   return {
@@ -327,9 +344,11 @@ export async function getDisputes(userId: string): Promise<DisputeSummary[]> {
       `select d.id, d.lead_id, l.company_name, d.payout_id, d.category, d.status, d.outcome,
               a.display_name as opened_by_agent_name, d.opened_at, d.auto_approve_at
        from tandem.disputes d
-       join tandem.leads l on l.id = d.lead_id
-       join tandem.agents a on a.id = d.opened_by_agent_id
+       join tandem.leads l on l.id = d.lead_id and l.workspace_id = d.workspace_id
+       join tandem.agents a on a.id = d.opened_by_agent_id and a.workspace_id = d.workspace_id
+       where d.workspace_id = $1
        order by (d.status = 'resolved'), d.opened_at desc`
+      , [WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({
@@ -374,18 +393,19 @@ export async function getDisputeDetail(userId: string, disputeId: string): Promi
                   and e.source_event_id = 'dispute:' || d.id::text || ':outcome'
               ) as outcome_applied
        from tandem.disputes d
-       join tandem.leads l on l.id = d.lead_id
-       join tandem.agents a on a.id = d.opened_by_agent_id
-       join tandem.payouts p on p.id = d.payout_id
-       where d.id = $1`,
-      [disputeId]
+       join tandem.leads l on l.id = d.lead_id and l.workspace_id = d.workspace_id
+       join tandem.agents a on a.id = d.opened_by_agent_id and a.workspace_id = d.workspace_id
+       join tandem.payouts p on p.id = d.payout_id and p.workspace_id = d.workspace_id
+       where d.id = $1 and d.workspace_id = $2`,
+      [disputeId, WORKSPACE_ID]
     );
     const dispute = disputeResult.rows[0];
     if (!dispute) return null;
 
     const eventsResult = await client.query<{ id: string; event_type: string; payload: Record<string, unknown>; occurred_at: string }>(
-      `select id, event_type, payload, occurred_at from tandem.dispute_events where dispute_id = $1 order by sequence`,
-      [disputeId]
+      `select id, event_type, payload, occurred_at from tandem.dispute_events
+       where dispute_id = $1 and workspace_id = $2 order by sequence`,
+      [disputeId, WORKSPACE_ID]
     );
 
     return {
@@ -420,8 +440,8 @@ export async function getTrailEntries(userId: string, leadId: string): Promise<T
       logged_at: string; corrected_at: string | null; retracted: boolean;
     }>(
       `select id, channel, confidence_rating, sales_stage, note, logged_at, corrected_at, retracted
-       from tandem.trail_entries where lead_id = $1 order by logged_at asc`,
-      [leadId]
+       from tandem.trail_entries where lead_id = $1 and workspace_id = $2 order by logged_at asc`,
+      [leadId, WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({
@@ -444,7 +464,8 @@ export async function getEarningsSummary(userId: string): Promise<EarningsSummar
          coalesce(sum(amount_minor) filter (where paid_at >= date_trunc('month', now())), 0) as month_minor,
          coalesce(sum(amount_minor) filter (where paid_at >= date_trunc('week', now())), 0) as week_minor,
          min(currency) as currency
-       from tandem.payouts where status = 'paid'`
+       from tandem.payouts where workspace_id = $1 and status = 'paid'`,
+      [WORKSPACE_ID]
     )
   );
   const row = result.rows[0];
@@ -471,13 +492,13 @@ export async function getMonthlyMetrics(userId: string): Promise<MonthlyMetrics[
          select to_char(date_trunc('month', paid_at), 'YYYY-MM') as month,
                 count(*) as commissions_closed_count, sum(amount_minor) as commissions_closed_minor
          from tandem.payouts
-         where status = 'paid' and paid_at >= date_trunc('month', now()) - interval '5 months'
+         where workspace_id = $1 and status = 'paid' and paid_at >= date_trunc('month', now()) - interval '5 months'
          group by 1
        ),
        created as (
          select to_char(date_trunc('month', created_at), 'YYYY-MM') as month, count(*) as leads_created_count
          from tandem.leads
-         where created_at >= date_trunc('month', now()) - interval '5 months'
+         where workspace_id = $1 and created_at >= date_trunc('month', now()) - interval '5 months'
          group by 1
        )
        select months.month,
@@ -487,7 +508,8 @@ export async function getMonthlyMetrics(userId: string): Promise<MonthlyMetrics[
        from months
        left join closed on closed.month = months.month
        left join created on created.month = months.month
-       order by months.month`
+       order by months.month`,
+      [WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({

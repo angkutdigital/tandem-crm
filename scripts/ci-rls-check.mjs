@@ -49,6 +49,7 @@ async function main() {
   const agentUserA = randomUUID();
   const payoutA = randomUUID();
   const payoutEventA = randomUUID();
+  const overdueDisputeA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -84,11 +85,50 @@ async function main() {
        values ($1, $2, $3, 'ci-partner', 1000, 'USD', 0, now(), now(), 'held', $4)`,
       [payoutA, workspaceA, leadA, payoutEventA]
     );
+    await pool.query(
+      `insert into tandem.disputes
+         (id, workspace_id, lead_id, payout_id, opened_by_agent_id, category,
+          expected_amount_minor, description, status, opened_at, auto_approve_at)
+       values ($1, $2, $3, $4, $5, 'incorrect', 1200, 'CI overdue dispute',
+               'open', now() - interval '2 days', now() - interval '1 day')`,
+      [overdueDisputeA, workspaceA, leadA, payoutA, agentA]
+    );
     await pool.query("commit");
   } catch (error) {
     await pool.query("rollback");
     throw error;
   }
+
+  // 015 keeps scheduling vendor-neutral: CI invokes the database function
+  // directly, while a production host calls the same function from its own
+  // trusted scheduler. It must resolve exactly once and write one immutable
+  // event, even when the scheduler is retried.
+  const firstOverdueRun = await pool.query(
+    "select dispute_id from tandem.resolve_overdue_disputes()"
+  );
+  check(
+    "overdue-dispute scheduler resolves the due dispute",
+    firstOverdueRun.rows.length === 1 && firstOverdueRun.rows[0].dispute_id === overdueDisputeA
+  );
+  const secondOverdueRun = await pool.query(
+    "select dispute_id from tandem.resolve_overdue_disputes()"
+  );
+  check("overdue-dispute scheduler is idempotent on retry", secondOverdueRun.rows.length === 0);
+  const overdueResolution = await pool.query(
+    `select d.status, d.outcome, count(e.id) as event_count
+     from tandem.disputes d
+     left join tandem.dispute_events e on e.dispute_id = d.id
+     where d.id = $1
+     group by d.status, d.outcome`,
+    [overdueDisputeA]
+  );
+  check(
+    "overdue dispute projection and immutable event agree",
+    overdueResolution.rows.length === 1 &&
+      overdueResolution.rows[0].status === "resolved" &&
+      overdueResolution.rows[0].outcome === "upheld" &&
+      Number(overdueResolution.rows[0].event_count) === 1
+  );
 
   const membersAsA = await withTandemSession(pool, userA, (client) =>
     client.query("select workspace_id from tandem.members")

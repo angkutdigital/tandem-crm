@@ -44,8 +44,10 @@ function initialsOf(name: string) {
 
 export function UserSwitcher({
   currentMember,
+  demoMode,
 }: {
   currentMember: { userId: string; role: string } | null;
+  demoMode: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -74,6 +76,18 @@ export function UserSwitcher({
         <SidebarMenuItem>
           <div className="px-2 py-1.5 text-xs text-muted-foreground">
             Not signed in
+          </div>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
+
+  if (!demoMode) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            Signed in as <span className="font-medium text-foreground">{activeName}</span>
           </div>
         </SidebarMenuItem>
       </SidebarMenu>
