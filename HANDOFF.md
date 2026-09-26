@@ -81,14 +81,33 @@ under the equivalent from-scratch conditions.
    travels with the app regardless of host (Vercel, Netlify, Railway, a
    Dockerfile) since it's not a platform-specific setting.
 
-Both fixes verified against the literal worst-case conditions (no
-pre-built `dist/` anywhere, no env vars set) with a real `npm run build`
-locally, not just reasoned about. The one genuinely Vercel-specific piece
-of this whole deploy is the "Include source files outside of the Root
-Directory" toggle -- any other provider will have its own equivalent
-setting for a monorepo whose app depends on sibling directories, and
-whoever sets that up next should expect to find it, not assume it's
-automatic.
+**Correction, same session, right after writing the paragraph above:** that
+"worst-case conditions" claim was wrong -- it wiped `dist/` and env vars,
+but the `node_modules` at every level (root, `packages/camp`,
+`examples/dashboard`) were still the ones already sitting on disk from
+normal local development. That silently hid the actual worst case: Vercel
+only ever runs `npm install` inside the Root Directory
+(`examples/dashboard`), never at the true repo root, so the root
+`tandem-crm` package's own dependencies (`pg`, `@types/pg`, `typescript`)
+were never installed anywhere on Vercel -- its build step failed with
+"Cannot find module 'pg'" even after the build-order fix above was
+correct. A second real deploy attempt caught this. Fixed by adding
+`npm install --prefix ../..` as the first step of `examples/dashboard`'s
+own build script, before building `tandem-crm`; root npm workspaces then
+hoists `packages/camp`'s deps too, so no separate install is needed there.
+This time actually verified by deleting every `node_modules` and `dist/`
+on disk and running only `npm install` inside `examples/dashboard` (the
+literal Vercel install step), then `npm run build` -- end to end, with and
+without env vars present. The lesson, not just the fix: "delete `dist/`
+and unset env vars" is not the same as "reproduce what the actual CI
+install step does." Test the actual install scope, not an approximation
+of it, before calling a deploy fix verified.
+
+The one genuinely Vercel-specific piece of this whole deploy is the
+"Include source files outside of the Root Directory" toggle -- any other
+provider will have its own equivalent setting for a monorepo whose app
+depends on sibling directories, and whoever sets that up next should
+expect to find it, not assume it's automatic.
 
 **Local demo data:** a real Neon Postgres project now exists for the
 public demo (`tandem-crm-demo`, ap-southeast-1/Singapore), migrated via
