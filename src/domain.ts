@@ -6,6 +6,19 @@ export const tandemLeadStatuses = [
 ] as const;
 
 export type TandemLeadStatus = (typeof tandemLeadStatuses)[number];
+
+/** The sales-cycle pipeline (New -> ... -> Closed_Won/Closed_Lost), a
+ * separate axis from TandemLeadStatus (the commission pipeline: Won ->
+ * Commission_Hold -> ... -> Commission_Paid). The two were previously
+ * conflated -- the Kanban grouped by TandemLeadStatus while the sales stage
+ * only ever lived inside a Trail activity entry, unqueryable on the lead
+ * itself. Defined here, not in trail.ts, so both modules share one
+ * definition without trail.ts depending on domain.ts's event log or vice
+ * versa; trail.ts re-exports these under its existing names. */
+export const leadSalesStages = [
+  "New", "Contacted", "Qualified", "Negotiating", "Closed_Won", "Closed_Lost",
+] as const;
+export type LeadSalesStage = (typeof leadSalesStages)[number];
 export type QualificationStatus = Extract<TandemLeadStatus, "Automated_Setup" | "Manual_Review">;
 export type InboundLead = {
   companyName: string;
@@ -90,6 +103,7 @@ export type TandemEvent = EventBase & (
   | { type: "lead.created"; data: { companyName: string; qualificationMetric: number; qualification: QualificationStatus; partnerId?: string } }
   | { type: "lead.assigned"; data: { agentId: string; territoryId: string | null } }
   | { type: "lead.lost"; data: { reason: string } }
+  | { type: "lead.stage_changed"; data: { salesStage: LeadSalesStage } }
   | { type: "conversion.confirmed"; data: Record<string, never> }
   | { type: "payment.confirmed"; data: { amountMinor: number; currency: string } }
   | { type: "payment.refunded"; data: { reason: string } }
@@ -122,6 +136,7 @@ export type LeadState = {
   workspaceId: string;
   leadId: string;
   status: TandemLeadStatus;
+  salesStage: LeadSalesStage;
   companyName: string;
   qualificationMetric: number;
   partnerId: string | null;
@@ -174,7 +189,12 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         requireTransition(state === null, event.type);
         if (!event.data.companyName.trim() || !Number.isSafeInteger(event.data.qualificationMetric) || event.data.qualificationMetric < 0) throw new Error("invalid lead creation data");
         if (event.data.qualification !== "Automated_Setup" && event.data.qualification !== "Manual_Review") throw new Error("invalid qualification");
-        state = { workspaceId, leadId, status: event.data.qualification, companyName: event.data.companyName, qualificationMetric: event.data.qualificationMetric, partnerId: event.data.partnerId ?? null, agentId: null, territoryId: null, payment: null, commission: null, lastSequence };
+        state = { workspaceId, leadId, status: event.data.qualification, salesStage: "New", companyName: event.data.companyName, qualificationMetric: event.data.qualificationMetric, partnerId: event.data.partnerId ?? null, agentId: null, territoryId: null, payment: null, commission: null, lastSequence };
+        break;
+      case "lead.stage_changed":
+        requireTransition(state !== null, event.type);
+        if (!leadSalesStages.includes(event.data.salesStage)) throw new Error("invalid salesStage");
+        state = { ...currentLead(state), salesStage: event.data.salesStage, lastSequence };
         break;
       case "lead.assigned":
         requireTransition(state !== null && state.status !== "Lost" && state.status !== "Refunded", event.type);

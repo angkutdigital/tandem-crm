@@ -2,6 +2,7 @@ export * from "./domain.js";
 export * from "./tandem.config.js";
 export * from "./auth.js";
 export * from "./authAdapter.js";
+export * from "./payoutAdapter.js";
 export * from "./doctor.js";
 export * from "./ascent.js";
 export * from "./waypoint.js";

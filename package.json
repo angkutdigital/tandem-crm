@@ -9,6 +9,9 @@
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "tandem-crm": "./bin/tandem-crm.mjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -22,6 +25,7 @@
   "sideEffects": false,
   "files": [
     "dist",
+    "bin",
     "db/migrations",
     "README.md",
     "LICENSE"

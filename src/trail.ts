@@ -1,4 +1,4 @@
-import { eventIdempotencyKey } from "./domain.js";
+import { eventIdempotencyKey, leadSalesStages, type LeadSalesStage } from "./domain.js";
 
 /** Kept deliberately small and free-text-first: this is a lightweight
  * activity log for an agent working a lead, not a full CRM object model.
@@ -10,10 +10,12 @@ import { eventIdempotencyKey } from "./domain.js";
 export const trailVisitChannels = ["phone", "physical", "email"] as const;
 export type TrailVisitChannel = (typeof trailVisitChannels)[number];
 
-export const trailSalesStages = [
-  "New", "Contacted", "Qualified", "Negotiating", "Closed_Won", "Closed_Lost",
-] as const;
-export type TrailSalesStage = (typeof trailSalesStages)[number];
+/** Re-exported from domain.ts under Trail's existing names: sales stage is
+ * now a first-class field on LeadState (see domain.ts's leadSalesStages),
+ * not a concept Trail owns. Kept as an alias so existing callers of
+ * trailSalesStages/TrailSalesStage don't need to change. */
+export const trailSalesStages = leadSalesStages;
+export type TrailSalesStage = LeadSalesStage;
 
 type TrailEventBase = {
   id: string;

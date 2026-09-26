@@ -48,7 +48,7 @@ describe("Tandem deterministic replay", () => {
     const events = paidLead();
     const result = replay([events[4], events[0], events[2], events[1], events[3], { ...events[3] }]);
     expect(result).toMatchObject({
-      status: "Commission_Hold", agentId: "agent-1", territoryId: "territory-1",
+      status: "Commission_Hold", salesStage: "New", agentId: "agent-1", territoryId: "territory-1",
       commission: { status: "held", amountMinor: 1_000 }, lastSequence: 5,
     });
   });
@@ -69,6 +69,25 @@ describe("Tandem deterministic replay", () => {
   it("rejects unknown persisted event types during replay", () => {
     const unknown = { ...paidLead()[0], type: "payment.partially_refunded" } as unknown as TandemEvent;
     expect(() => replay([unknown])).toThrow("unsupported event type: payment.partially_refunded");
+  });
+});
+
+describe("Tandem sales stage (a separate axis from the commission pipeline)", () => {
+  it("defaults a new lead to New and moves independently of commission status", () => {
+    expect(replay(paidLead())).toMatchObject({ status: "Commission_Hold", salesStage: "New" });
+    const staged = replay([...paidLead(), fact(6, "lead.stage_changed", { salesStage: "Negotiating" })]);
+    expect(staged).toMatchObject({ status: "Commission_Hold", salesStage: "Negotiating" });
+  });
+  it("allows repeated and terminal stage changes regardless of commission outcome", () => {
+    const lost = [fact(1, "lead.created", { companyName: "Fleet", qualificationMetric: 15, qualification: "Automated_Setup" }), fact(2, "lead.lost", { reason: "no budget" })];
+    const staged = replay([...lost, fact(3, "lead.stage_changed", { salesStage: "Closed_Lost" })]);
+    expect(staged).toMatchObject({ status: "Lost", salesStage: "Closed_Lost" });
+    const restaged = replay([...lost, fact(3, "lead.stage_changed", { salesStage: "Qualified" }), fact(4, "lead.stage_changed", { salesStage: "Closed_Lost" })]);
+    expect(restaged?.salesStage).toBe("Closed_Lost");
+  });
+  it("rejects a stage change before the lead exists and an invalid stage value", () => {
+    expect(() => replay([fact(1, "lead.stage_changed", { salesStage: "New" })])).toThrow("invalid transition");
+    expect(() => replay([...paidLead(), fact(6, "lead.stage_changed", { salesStage: "Bogus" as never })])).toThrow("invalid salesStage");
   });
 });
 
