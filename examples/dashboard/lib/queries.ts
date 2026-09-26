@@ -237,15 +237,16 @@ export type PayoutSummary = {
   currency: string;
   status: string;
   releaseAt: string;
+  paidAt: string | null;
 };
 
 export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
       id: string; lead_id: string; company_name: string; amount_minor: string;
-      currency: string; status: string; release_at: string;
+      currency: string; status: string; release_at: string; paid_at: string | null;
     }>(
-      `select p.id, p.lead_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at
+      `select p.id, p.lead_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at, p.paid_at
        from tandem.payouts p
        join tandem.leads l on l.id = p.lead_id
        order by p.release_at desc`
@@ -253,7 +254,8 @@ export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
   );
   return result.rows.map((row) => ({
     id: row.id, leadId: row.lead_id, companyName: row.company_name,
-    amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status, releaseAt: toISO(row.release_at),
+    amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status,
+    releaseAt: toISO(row.release_at), paidAt: row.paid_at ? toISO(row.paid_at) : null,
   }));
 }
 

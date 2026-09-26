@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  ChartNoAxesCombined,
   Route,
   Scale,
   UserCog,
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/agents", label: "Agents", icon: UserCog },
   { href: "/payouts", label: "Payouts", icon: Wallet },
+  { href: "/earnings", label: "Earnings", icon: ChartNoAxesCombined },
   { href: "/disputes", label: "Disputes", icon: Scale },
   // Routing policy is an owner-level decision; see app/settings/routing/page.tsx's
   // own server-side check for why this isn't just a client-side nicety.

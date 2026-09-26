@@ -3,6 +3,40 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): Earnings dashboard completed
+
+Work happened on `codex/coaster-resolution-verification` after the Coaster
+resolution milestone.
+
+- **Added `/earnings`:** a member-scoped view of paid commission income with
+  week, month, year, and lifetime totals; a six-month paid-commission chart;
+  and a searchable, sortable, paginated earnings table. The existing query
+  contract intentionally includes only `status = 'paid'` money, so held and
+  eligible commissions cannot be presented as income.
+- **Added CSV export:** the earnings table generates `tandem-earnings.csv`
+  in the browser from the currently filtered paid-commission rows. It does
+  not add a server endpoint or transmit data anywhere.
+- **Extended the existing payout read model:** `getPayouts()` now exposes
+  nullable `paidAt`, allowing the earnings history to show the actual paid
+  date while keeping the existing Payouts page compatible.
+- **Navigation:** `Earnings` is now available beside Payouts in the Nest
+  dashboard sidebar.
+- **Verified live:** seeded dashboard data rendered RM 1,200 for the paid
+  Delta Cargo commission, correct period totals (RM 1,200 current
+  week/month/year and RM 6,000 lifetime), six month labels, and filtering.
+  Browser console errors were empty. The browser automation did not report
+  completion for a Blob-backed download event, but the enabled export button
+  and its client-side path were exercised.
+- **Checks:** root typecheck and dashboard-specific TypeScript check pass.
+  The dashboard production build remains blocked in this host by the known
+  Turbopack worker port-binding restriction. `npm run lint --prefix
+  examples/dashboard` also fails on pre-existing reui source lint errors;
+  this milestone introduced none.
+
+**Next bounded milestone:** add Trail activity to the Lead detail page, then
+run a short Product Hunt demo-flow pass. Do not start installer/provisioning
+work until those dashboard surfaces are done.
+
 ## Update (2026-09-26): Coaster resolution path verified and fixed
 
 Work happened on `codex/coaster-resolution-verification`, based on
