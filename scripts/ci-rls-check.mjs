@@ -58,6 +58,8 @@ async function main() {
   const trailEntryA = randomUUID();
   const adminCreatedAgentA = randomUUID();
   const territoryA = randomUUID();
+  const commissionRuleA = randomUUID();
+  const linkedHostUserA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -340,6 +342,65 @@ async function main() {
     client.query("select id from tandem.territories where id = $1", [territoryA])
   );
   check("workspace B's owner cannot read workspace A's territory", crossTenantTerritoryRead.rows.length === 0);
+
+  // Nest's commission-policy form only writes the existing Core config table.
+  // The rule is intentionally not a payout mutation: a host adapter chooses
+  // when to use it while appending a new commission event.
+  const adminCommissionPolicy = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      `insert into tandem.commission_rules
+         (id, workspace_id, product_tag, currency, basis_points, hold_days)
+       values ($1, $2, 'ci-product', 'MYR', 750, 14)`,
+      [commissionRuleA, workspaceA]
+    )
+  );
+  check("a workspace admin can configure a commission policy", adminCommissionPolicy.rowCount === 1);
+
+  let agentCommissionPolicyBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.commission_rules
+           (workspace_id, product_tag, currency, basis_points, hold_days)
+         values ($1, 'agent-product', 'MYR', 750, 14)`,
+        [workspaceA]
+      )
+    );
+  } catch {
+    agentCommissionPolicyBlocked = true;
+  }
+  check("an agent cannot configure a commission policy", agentCommissionPolicyBlocked);
+
+  const crossTenantCommissionRead = await withTandemSession(pool, userB, (client) =>
+    client.query("select id from tandem.commission_rules where id = $1", [commissionRuleA])
+  );
+  check("workspace B's owner cannot read workspace A's commission policy", crossTenantCommissionRead.rows.length === 0);
+
+  // A portable host creates its own account first, then Nest may link that
+  // UUID to an agent profile. This proves the manager-only membership insert
+  // cannot become an agent privilege-escalation path.
+  const adminMembershipLink = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      `insert into tandem.members (workspace_id, user_id, role, agent_id)
+       values ($1, $2, 'agent', $3)`,
+      [workspaceA, linkedHostUserA, adminCreatedAgentA]
+    )
+  );
+  check("a workspace admin can link a host account to an agent profile", adminMembershipLink.rowCount === 1);
+
+  let agentMembershipLinkBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.members (workspace_id, user_id, role, agent_id)
+         values ($1, $2, 'agent', $3)`,
+        [workspaceA, randomUUID(), agentA]
+      )
+    );
+  } catch {
+    agentMembershipLinkBlocked = true;
+  }
+  check("an agent cannot link another host account", agentMembershipLinkBlocked);
 
   // Ramp's template is admin-managed; the agent owns the normal progress
   // events for their own profile, while an explicit reopening of a past

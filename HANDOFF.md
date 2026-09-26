@@ -3,6 +3,39 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): Nest configuration path complete
+
+- Workspace setup now includes **commission policy**: an owner/admin can
+  configure a product tag, ISO currency, commission rate in basis points, and
+  hold period. It is intentionally configuration only: a rule never rewrites
+  an existing payout or silently creates money. The host's lead adapter must
+  explicitly choose a rule while appending a future commission event.
+- In production host-auth mode, setup also offers **Link existing account**.
+  It connects an already-verified, host-owned UUID to a selected agent profile
+  as an `agent` member. Tandem creates no credentials, invitations, passwords,
+  or auth-provider dependency. The dashboard demo hides the form because its
+  local identities are intentionally fake.
+- The link action is deliberately narrow: owner/admin only, both IDs must be
+  UUIDs, the selected profile must be in the current workspace, the account
+  cannot already have a membership, and the action cannot grant or overwrite
+  owner/admin access. This keeps it an identity mapping step, not a privilege
+  escalation mechanism.
+- Verified: root typecheck/build, dashboard TypeScript, 89/89 domain tests,
+  and all real-Postgres RLS checks pass. The expanded RLS suite proves an
+  admin can create commission policy and link an account, while an agent and
+  another workspace cannot. The local Workspace setup preview rendered both
+  cards and had no browser-console errors.
+- Dashboard lint still reports pre-existing errors in imported `reui` example
+  components and existing warnings. This slice added none; do not treat it as
+  a regression in the Nest configuration workflow.
+
+**Next sensible milestone:** make the generic package install path self-serve:
+one documented command path from `DATABASE_URL` through migrations, a health
+check, first workspace/admin bootstrap, and a safe sample/empty mode. That is
+the remaining "last mile" before a stranger can install the core package
+without manual SQL. Hosted database provisioning stays a separate hosted
+Tandem CRM concern.
+
 ## Update (2026-09-26): Coaster, Core, and Ramp closed for v1
 
 The owner asked for the three near-complete domain modules to be closed in

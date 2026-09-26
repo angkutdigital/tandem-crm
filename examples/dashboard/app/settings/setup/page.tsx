@@ -1,7 +1,8 @@
-import { AddOnboardingStepForm, AddTerritoryForm } from "@/components/workspace-setup-forms";
+import { AddCommissionRuleForm, AddOnboardingStepForm, AddTerritoryForm, LinkExistingUserForm } from "@/components/workspace-setup-forms";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getOnboardingSteps, getTerritories, requireCurrentMember } from "@/lib/queries";
+import { isDemoAuth } from "@/lib/auth";
+import { getAgentSummaries, getCommissionRules, getOnboardingSteps, getTerritories, requireCurrentMember } from "@/lib/queries";
 
 export default async function WorkspaceSetupPage() {
   const member = await requireCurrentMember();
@@ -13,9 +14,11 @@ export default async function WorkspaceSetupPage() {
     );
   }
 
-  const [steps, territories] = await Promise.all([
+  const [steps, territories, commissionRules, agents] = await Promise.all([
     getOnboardingSteps(member.userId),
     getTerritories(member.userId),
+    getCommissionRules(member.userId),
+    getAgentSummaries(member.userId),
   ]);
 
   return (
@@ -51,6 +54,35 @@ export default async function WorkspaceSetupPage() {
             <div className="flex flex-wrap gap-2">
               {territories.map((territory) => <Badge key={territory.id} variant={territory.active ? "secondary" : "outline"}>{territory.name} · {territory.code} · {territory.agentCount} agents</Badge>)}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Commission policy</CardTitle>
+          <CardDescription>Set the rate and hold period for each product and currency. These rules are configuration for your lead adapter; adding one never retroactively changes an existing payout.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <AddCommissionRuleForm />
+          {commissionRules.length === 0 ? <p className="text-sm text-muted-foreground">No commission policy configured.</p> : (
+            <div className="flex flex-wrap gap-2">
+              {commissionRules.map((rule) => <Badge key={rule.id} variant={rule.active ? "secondary" : "outline"}>{rule.productTag} · {rule.currency} · {(rule.basisPoints / 100).toFixed(2)}% · {rule.holdDays} day hold</Badge>)}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Team access</CardTitle>
+          <CardDescription>Link an account your own auth system has already created to an agent profile. Tandem does not create logins, store passwords, or choose an auth provider.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isDemoAuth ? (
+            <p className="text-sm text-muted-foreground">This reference demo uses local demo identities. In host auth mode, this form links a verified host user UUID to an agent profile.</p>
+          ) : (
+            <LinkExistingUserForm agents={agents.map((agent) => ({ id: agent.id, displayName: agent.displayName }))} />
           )}
         </CardContent>
       </Card>

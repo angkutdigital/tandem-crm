@@ -418,6 +418,71 @@ export async function assignAgentToTerritory(agentId: string, territoryId: strin
   revalidatePath("/settings/setup");
 }
 
+export async function createCommissionRule(input: {
+  productTag: string;
+  currency: string;
+  basisPoints: number;
+  holdDays: number;
+}): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const productTag = input.productTag.trim();
+  const currency = input.currency.trim().toUpperCase();
+  if (!productTag) throw new Error("product tag is required");
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error("currency must be a three-letter ISO code, for example MYR");
+  if (!Number.isSafeInteger(input.basisPoints) || input.basisPoints < 0 || input.basisPoints > 10_000) {
+    throw new Error("commission rate must be between 0 and 10,000 basis points");
+  }
+  if (!Number.isSafeInteger(input.holdDays) || input.holdDays < 0) {
+    throw new Error("hold days must be a whole number of zero or more");
+  }
+
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.commission_rules
+         (workspace_id, product_tag, currency, basis_points, hold_days)
+       values ($1, $2, $3, $4, $5)`,
+      [WORKSPACE_ID, productTag, currency, input.basisPoints, input.holdDays]
+    )
+  );
+  revalidatePath("/settings/setup");
+}
+
+/** Links a user the host has already authenticated to one operational agent
+ * profile. This never creates credentials or changes a person's workspace
+ * privilege: managers may only add an agent membership, and an existing
+ * membership is rejected rather than overwritten. */
+export async function linkExistingUserToAgent(input: { userId: string; agentId: string }): Promise<void> {
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const userId = input.userId.trim();
+  const agentId = input.agentId.trim();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuid.test(userId)) throw new Error("host user ID must be a UUID from your verified auth system");
+  if (!uuid.test(agentId)) throw new Error("select a valid agent profile");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const agent = await client.query(
+      "select id from tandem.agents where id = $1 and workspace_id = $2",
+      [agentId, WORKSPACE_ID]
+    );
+    if (agent.rowCount !== 1) throw new Error("agent profile was not found in this workspace");
+    const existing = await client.query(
+      "select id from tandem.members where workspace_id = $1 and user_id = $2",
+      [WORKSPACE_ID, userId]
+    );
+    if (existing.rowCount !== 0) throw new Error("this host account is already linked to this workspace");
+    await client.query(
+      `insert into tandem.members (workspace_id, user_id, role, agent_id)
+       values ($1, $2, 'agent', $3)`,
+      [WORKSPACE_ID, userId, agentId]
+    );
+  });
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${agentId}`);
+  revalidatePath("/settings/setup");
+}
+
 export async function setRoutingStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, (client) =>

@@ -169,6 +169,42 @@ export async function getAgentTerritoryIds(userId: string, agentId: string): Pro
   return result.rows.map((row) => row.territory_id);
 }
 
+export type CommissionRule = {
+  id: string;
+  productTag: string;
+  currency: string;
+  basisPoints: number;
+  holdDays: number;
+  active: boolean;
+};
+
+/** Commission policy is ordinary workspace configuration. The host's lead
+ * adapter decides when to use it to create a commission. Keeping that choice
+ * outside the read model prevents a new rule from silently rewriting money
+ * that is already represented by immutable lead events. */
+export async function getCommissionRules(userId: string): Promise<CommissionRule[]> {
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; product_tag: string; currency: string; basis_points: number;
+      hold_days: number; active: boolean;
+    }>(
+      `select id, product_tag, currency, basis_points, hold_days, active
+       from tandem.commission_rules
+       where workspace_id = $1
+       order by product_tag, currency`,
+      [WORKSPACE_ID]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    productTag: row.product_tag,
+    currency: row.currency,
+    basisPoints: Number(row.basis_points),
+    holdDays: Number(row.hold_days),
+    active: row.active,
+  }));
+}
+
 export type AgentDetail = {
   id: string;
   displayName: string;
