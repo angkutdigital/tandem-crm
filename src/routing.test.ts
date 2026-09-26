@@ -28,6 +28,13 @@ describe("Tandem lead routing", () => {
       "openLeadCount must be a non-negative safe integer"
     );
   });
+  it("rejects malformed or duplicate candidates for automatic routing", () => {
+    expect(() => selectAgentForLead([{ agentId: "", openLeadCount: 0 }], "round_robin", null)).toThrow("agentId is required");
+    expect(() => selectAgentForLead([
+      { agentId: "agent-a", openLeadCount: 0 },
+      { agentId: "agent-a", openLeadCount: 1 },
+    ], "least_loaded", null)).toThrow("unique agentId");
+  });
   it("round_robin starts at the first sorted agent when there is no prior assignment", () => {
     expect(selectAgentForLead(candidates, "round_robin", null)).toBe("agent-a");
   });

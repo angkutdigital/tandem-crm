@@ -55,6 +55,7 @@ async function main() {
   const adminCreateEventA = randomUUID();
   const agentCreatedLeadA = randomUUID();
   const onboardingStepA = randomUUID();
+  const trailEntryA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -335,6 +336,91 @@ async function main() {
     )
   );
   check("workspace B's owner cannot read workspace A's onboarding", crossTenantOnboardingRead.rows.length === 0);
+
+  // Routing is workspace configuration: every member may read the current
+  // strategy, but only an owner/admin may create or change it.
+  const adminRoutingInsert = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      "insert into tandem.routing_settings (workspace_id, strategy) values ($1, 'round_robin')",
+      [workspaceA]
+    )
+  );
+  check("a workspace admin can set routing strategy", adminRoutingInsert.rowCount === 1);
+
+  const agentRoutingRead = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("select strategy from tandem.routing_settings where workspace_id = $1", [workspaceA])
+  );
+  check(
+    "an agent can read their workspace routing strategy",
+    agentRoutingRead.rows.length === 1 && agentRoutingRead.rows[0].strategy === "round_robin"
+  );
+
+  const agentRoutingUpdate = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.routing_settings set strategy = 'manual' where workspace_id = $1", [workspaceA])
+  );
+  check("an agent cannot change routing strategy", agentRoutingUpdate.rowCount === 0);
+
+  const crossTenantRoutingRead = await withTandemSession(pool, userB, (client) =>
+    client.query("select strategy from tandem.routing_settings where workspace_id = $1", [workspaceA])
+  );
+  check("workspace B's owner cannot read workspace A's routing strategy", crossTenantRoutingRead.rows.length === 0);
+
+  const adminRoutingUpdate = await withTandemSession(pool, userA, (client) =>
+    client.query("update tandem.routing_settings set strategy = 'least_loaded' where workspace_id = $1", [workspaceA])
+  );
+  check("a workspace admin can change routing strategy", adminRoutingUpdate.rowCount === 1);
+
+  // Trail follows Core's own-lead rule: an assigned agent may append and
+  // correct activity on their lead, but may never touch another tenant's
+  // history. The event log stays append-only; the entry is a projection.
+  const agentTrailEvent = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      `insert into tandem.trail_events
+         (workspace_id, lead_id, entry_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, $3, 'ci', 'ci-agent-trail-visit', 'trail.visit_logged', $4, now())`,
+      [workspaceA, leadA, trailEntryA, JSON.stringify({
+        channel: "phone", confidenceRating: 6, salesStage: "Contacted", note: "CI trail visit",
+      })]
+    )
+  );
+  check("an agent can append activity for their assigned lead", agentTrailEvent.rowCount === 1);
+
+  const agentTrailProjection = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      `insert into tandem.trail_entries
+         (id, workspace_id, lead_id, channel, confidence_rating, sales_stage, note, logged_at, last_event_sequence)
+       values ($1, $2, $3, 'phone', 6, 'Contacted', 'CI trail visit', now(), 1)`,
+      [trailEntryA, workspaceA, leadA]
+    )
+  );
+  check("an agent can materialize their own Trail projection", agentTrailProjection.rowCount === 1);
+
+  const agentTrailUpdate = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.trail_entries set note = 'CI corrected trail visit' where id = $1", [trailEntryA])
+  );
+  check("an agent can correct their own-lead Trail projection", agentTrailUpdate.rowCount === 1);
+
+  const crossTenantTrailRead = await withTandemSession(pool, userB, (client) =>
+    client.query("select id from tandem.trail_entries where id = $1", [trailEntryA])
+  );
+  check("workspace B's owner cannot read workspace A's Trail entry", crossTenantTrailRead.rows.length === 0);
+
+  let agentCrossTenantTrailBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.trail_events
+           (workspace_id, lead_id, entry_id, source, source_event_id, event_type, payload, occurred_at)
+         values ($1, $2, $3, 'ci', 'ci-agent-cross-tenant-trail', 'trail.visit_logged', $4, now())`,
+        [workspaceB, leadB, randomUUID(), JSON.stringify({
+          channel: "phone", confidenceRating: 6, salesStage: "Contacted", note: "must be blocked",
+        })]
+      )
+    );
+  } catch {
+    agentCrossTenantTrailBlocked = true;
+  }
+  check("an agent cannot append Trail activity in another workspace", agentCrossTenantTrailBlocked);
 
   // Coaster must follow the same tenant and role boundaries as Core: the
   // assigned agent can read their own lead's dispute, but only a workspace

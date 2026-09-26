@@ -7,8 +7,8 @@ whoever picks this up next has read it and it's stale.
 
 The owner asked for the three near-complete domain modules to be closed in
 this order: **Coaster → Core → Ramp**. Each had one real remaining v1 gap;
-all three are now closed and tested. The next module to evaluate is Routing,
-not a new feature or installer work.
+all three are now closed and tested. Routing and Trail are also closed. The
+next work is Nest's production-readiness workflow, not another domain module.
 
 ### Coaster checkpoint complete
 
@@ -60,6 +60,32 @@ not a new feature or installer work.
 - Ramp is now **v1-complete**. It intentionally remains a lightweight
   certification tracker—not an LMS, document store, quiz system, or automatic
   sales/commission gate.
+
+### Routing checkpoint complete
+
+- The pure selector now rejects blank or duplicate candidate IDs in automatic
+  modes, preventing an upstream adapter from silently producing ambiguous
+  assignments. Manual routing remains intentionally a no-op recommendation.
+- Expanded real-Postgres checks prove a member can read the workspace strategy,
+  but only an owner/admin can create or change it; another workspace cannot
+  read it at all.
+- Routing is now **v1-complete**: deterministic strategy selection, sensible
+  no-candidate behavior, owner-controlled configuration, and tenant-safe
+  database enforcement are all covered. A host still decides when to invoke a
+  recommendation and append `lead.assigned`, by design.
+
+### Trail checkpoint complete
+
+- Trail's event/replay/retraction workflow and lead-detail UI were already
+  complete. Added the missing real-Postgres permission coverage: an assigned
+  agent can append and correct their lead's activity/projection; cross-workspace
+  reads and writes are denied.
+- Trail is now **v1-complete** as a lightweight CRM activity timeline. It
+  deliberately does not expand into contacts, tasks, calendars, or a second
+  CRM schema; hosts can layer those on their own database if needed.
+- The package's five v1 domain modules—**Core, Ramp, Routing, Coaster, and
+  Trail**—are now closed. The full current suite is 89 domain tests and the
+  15-migration disposable-Postgres RLS suite.
 
 ## Update (2026-09-26): Coaster scheduling + dashboard hardening
 

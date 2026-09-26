@@ -116,7 +116,7 @@ The one place Coaster changes Core's own behavior: `release_due_commissions()` n
 
 ## Open items
 
-- The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers Core read/write boundaries, Ramp's template/progress/recertification boundary, and Coaster dispute visibility/resolution. Routing settings are the remaining module-specific RLS surface not yet exercised there.
+- The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers Core read/write boundaries, Ramp's template/progress/recertification boundary, Routing configuration, Coaster dispute visibility/resolution, and Trail activity writes. It uses a disposable real Postgres database, not mocks.
 - No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only.
 - Coaster records a dispute's outcome but does not execute it: no automatic replacement commission, amount adjustment, or clawback of an already-paid commission yet. Also missing: admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.

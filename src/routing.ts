@@ -17,6 +17,16 @@ function assertOpenLeadCount(openLeadCount: number): void {
   }
 }
 
+function assertCandidates(candidates: readonly RoutingCandidate[]): void {
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate.agentId.trim()) throw new Error("agentId is required");
+    if (seen.has(candidate.agentId)) throw new Error("routing candidates must have unique agentId values");
+    seen.add(candidate.agentId);
+    assertOpenLeadCount(candidate.openLeadCount);
+  }
+}
+
 /**
  * Picks the agent a new lead should be routed to, or null when routing is a
  * no-op. Pure: the caller supplies the candidates and the workspace strategy,
@@ -31,11 +41,9 @@ export function selectAgentForLead(
 
   if (strategy === "manual") return null;
 
-  if (strategy === "least_loaded") {
-    for (const candidate of candidates) {
-      assertOpenLeadCount(candidate.openLeadCount);
-    }
+  assertCandidates(candidates);
 
+  if (strategy === "least_loaded") {
     let best = candidates[0];
     for (const candidate of candidates) {
       if (
