@@ -111,6 +111,28 @@ export async function markLeadLost(leadId: string, reason: string): Promise<void
   await appendLeadEvent(leadId, "lead.lost", { reason });
 }
 
+/** Called when a kanban card is dragged into a new column. Not every column
+ * pair is a real transition: Won -> Commission_Hold needs a partner/amount/
+ * release date, Commission_Hold -> Commission_Eligible needs the release
+ * date to have passed, and so on through the rest of the money pipeline --
+ * none of that exists at the moment someone drags a card, so those columns
+ * are display-only destinations, not drop targets. Only the two
+ * transitions a drag actually has enough information for are allowed here;
+ * the UI must catch a thrown error from an unsupported drop and revert the
+ * card to its original column rather than leave the board lying about
+ * what's in the database. */
+export async function moveLeadStatus(leadId: string, targetStatus: string): Promise<void> {
+  if (targetStatus === "Won") {
+    await markLeadWon(leadId);
+    return;
+  }
+  if (targetStatus === "Lost") {
+    await markLeadLost(leadId, "Moved to Lost on the kanban board");
+    return;
+  }
+  throw new Error(`"${targetStatus.replace(/_/g, " ")}" isn't a status you can drag a lead into -- it needs data a drag can't supply.`);
+}
+
 /** Assigns a lead to a specific agent directly (from the lead detail page's
  * manual override), or -- when agentId is omitted -- asks
  * selectAgentForLead() to recommend one from the workspace's current
