@@ -61,20 +61,37 @@ automated RLS check covers the core schema (events, payouts, leads,
 onboarding) but not yet Ramp/routing/Coaster's own tables, nor the write
 side (an agent inserting/updating a row that isn't theirs).
 
-**What Coaster does not do yet**, in rough priority order:
+**Coaster dispute-execution and clawback (DONE, this session):** three new
+`domain.ts` event types exist now for a host app to append after reading a
+resolved dispute's category/outcome: `commission.adjusted` (unpaid
+commission, "incorrect, upheld"), `commission.reinstated` (a `voided`
+commission back to `held` with a fresh amount/release date, "untracked" or
+"declined, upheld"), and `commission.clawback_requested` (a `paid`
+commission, records money owed back without reversing the real payment).
+`payment.refunded` on an already-paid commission now clawbacks instead of
+refusing the transition. The business-rule decisions this needed (paid
+commission → record-obligation-only, not a hard block; untracked/declined
+amount → recompute via `calculateCommissionMinor` against the lead's
+payment, not a caller-supplied number; execution stays a separate explicit
+step, not automatic on `dispute.resolved`) were confirmed with the owner
+before writing any of this — see [[tandem-crm-open-source-gaps]] for why
+that mattered. 12 new domain tests, all passing. **Not done:** wiring these
+into the real `tandem.payouts` projection needs its own RLS/grants
+decision — `authenticated` has no `UPDATE` grant on `tandem.payouts` at
+all today, which turns out to be a pre-existing gap that also affects the
+existing `commission.approved`/`paid`/`voided` transitions, not something
+new. That's the next real piece of Coaster work.
 
-- Executing a resolved dispute: creating a new commission for an
-  "untracked, upheld" outcome, adjusting the amount for "incorrect,
-  upheld", re-approving for "declined, upheld". Right now the outcome is
-  just recorded; nothing acts on it.
-- Clawback of a commission that was already paid before the
-  refund/dispute happened. `domain.ts`'s `payment.refunded` still
-  explicitly refuses to touch a `paid` commission, on purpose.
+**What Coaster still does not do:**
+
 - A scheduled function that auto-resolves overdue disputes (mirroring
   `release_due_commissions()`); `isDisputeOverdue()` is a pure check
   only, nothing calls it on a schedule.
 - Admin-initiated holds unrelated to a partner's own dispute, and any
   dashboard UI for any of Coaster.
+- The RLS/grants decision above, without which none of this session's new
+  events can actually be written to `tandem.payouts` by an app running as
+  `authenticated`.
 
 **Not started:** npm publish prep beyond what's in `package.json` today
 (`files`, dual entry points, `sideEffects: false` are already set), a

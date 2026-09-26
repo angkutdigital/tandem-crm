@@ -98,6 +98,9 @@ export type TandemEvent = EventBase & (
   | { type: "commission.approved"; data: { payoutId: string } }
   | { type: "commission.paid"; data: { payoutId: string; payoutReference: string } }
   | { type: "commission.voided"; data: { payoutId: string; reason: string } }
+  | { type: "commission.adjusted"; data: { payoutId: string; newAmountMinor: number } }
+  | { type: "commission.reinstated"; data: { payoutId: string; amountMinor: number; releaseAt: string } }
+  | { type: "commission.clawback_requested"; data: { payoutId: string; amountMinor: number; reason: string } }
 );
 
 export type CommissionState = {
@@ -107,6 +110,13 @@ export type CommissionState = {
   currency: string;
   releaseAt: string;
   status: "held" | "eligible" | "approved" | "paid" | "voided";
+  /** Set once money already paid out needs to be recovered outside Tandem
+   * (a Coaster dispute upheld against a paid commission, or a refund that
+   * arrives after payout). Tandem never reverses a real payment itself;
+   * this is a record for the host app to act on (deduct a future payout,
+   * invoice the agent, etc.), the same non-enforcement split as everywhere
+   * else money is involved. Null whenever nothing is owed back. */
+  clawback: { amountMinor: number; reason: string; requestedAt: string } | null;
 };
 export type LeadState = {
   workspaceId: string;
@@ -185,15 +195,27 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         if (event.data.amountMinor === 0) throw new Error("payment amount must be positive");
         state = { ...currentLead(state), payment: { ...event.data, confirmedAt: event.occurredAt, refunded: false }, lastSequence };
         break;
-      case "payment.refunded":
-        requireTransition(state !== null && state.payment !== null && !state.payment.refunded && state.commission?.status !== "paid", event.type);
-        state = { ...currentLead(state), status: "Refunded", payment: { ...currentLead(state).payment!, refunded: true }, commission: currentLead(state).commission ? { ...currentLead(state).commission!, status: "voided" } : null, lastSequence };
+      case "payment.refunded": {
+        requireTransition(state !== null && state.payment !== null && !state.payment.refunded, event.type);
+        const priorCommission: CommissionState | null = currentLead(state).commission;
+        // A commission already paid is real money that already moved: Tandem cannot
+        // undo the payment itself, so a refund arriving after payout records a
+        // clawback obligation instead of voiding it (voiding would falsely claim
+        // the money never went out). Anything not yet paid never left the hold, so
+        // it can just be voided, same as before this refund arrived.
+        const nextCommission: CommissionState | null = priorCommission === null
+          ? null
+          : priorCommission.status === "paid"
+            ? { ...priorCommission, clawback: priorCommission.clawback ?? { amountMinor: priorCommission.amountMinor, reason: "payment refunded after payout", requestedAt: event.occurredAt } }
+            : { ...priorCommission, status: "voided" as const };
+        state = { ...currentLead(state), status: "Refunded", payment: { ...currentLead(state).payment!, refunded: true }, commission: nextCommission, lastSequence };
         break;
+      }
       case "commission.held":
         requireTransition(state !== null && state.payment !== null && !state.payment.refunded && state.commission === null && state.status === "Won", event.type);
         assertMoney(event.data.amountMinor, event.data.currency);
         if (!event.data.payoutId.trim() || !event.data.partnerId.trim() || event.data.amountMinor === 0 || event.data.amountMinor > state.payment.amountMinor || event.data.currency !== state.payment.currency || instant(event.data.releaseAt) < instant(state.payment.confirmedAt)) throw new Error("invalid commission hold");
-        state = { ...currentLead(state), status: "Commission_Hold", commission: { ...event.data, status: "held" }, lastSequence };
+        state = { ...currentLead(state), status: "Commission_Hold", commission: { ...event.data, status: "held", clawback: null }, lastSequence };
         break;
       case "commission.eligible":
         requireTransition(state !== null && state.commission?.status === "held" && !state.payment?.refunded && state.commission.payoutId === event.data.payoutId && instant(event.occurredAt) >= instant(state.commission.releaseAt), event.type);
@@ -210,6 +232,39 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
       case "commission.voided":
         requireTransition(state !== null && state.commission !== null && ["held", "eligible", "approved"].includes(state.commission.status) && state.commission.payoutId === event.data.payoutId, event.type);
         state = { ...currentLead(state), status: "Won", commission: { ...currentLead(state).commission!, status: "voided" }, lastSequence };
+        break;
+      // The next three exist to let a caller (typically resolving a Coaster
+      // dispute) act on an outcome. Tandem never appends these itself; see
+      // coaster.ts's dispute.resolved for the equivalent non-enforcement split.
+      case "commission.adjusted":
+        requireTransition(state !== null && state.commission !== null && ["held", "eligible", "approved"].includes(state.commission.status) && state.commission.payoutId === event.data.payoutId, event.type);
+        assertMoney(event.data.newAmountMinor, currentLead(state).commission!.currency);
+        if (event.data.newAmountMinor === 0 || event.data.newAmountMinor > currentLead(state).payment!.amountMinor) throw new Error("invalid adjusted commission amount");
+        state = { ...currentLead(state), commission: { ...currentLead(state).commission!, amountMinor: event.data.newAmountMinor }, lastSequence };
+        break;
+      case "commission.reinstated":
+        requireTransition(state !== null && state.payment !== null && !state.payment.refunded && state.commission?.status === "voided" && state.commission.payoutId === event.data.payoutId, event.type);
+        assertMoney(event.data.amountMinor, currentLead(state).commission!.currency);
+        if (event.data.amountMinor === 0 || event.data.amountMinor > currentLead(state).payment!.amountMinor || instant(event.data.releaseAt) < instant(currentLead(state).payment!.confirmedAt)) {
+          throw new Error("invalid commission reinstatement");
+        }
+        state = {
+          ...currentLead(state), status: "Commission_Hold",
+          commission: { ...currentLead(state).commission!, status: "held", amountMinor: event.data.amountMinor, releaseAt: event.data.releaseAt, clawback: null },
+          lastSequence,
+        };
+        break;
+      case "commission.clawback_requested":
+        requireTransition(state !== null && state.commission?.status === "paid" && state.commission.payoutId === event.data.payoutId && state.commission.clawback === null, event.type);
+        if (!Number.isSafeInteger(event.data.amountMinor) || event.data.amountMinor <= 0 || event.data.amountMinor > currentLead(state).commission!.amountMinor) {
+          throw new Error("clawback amountMinor must be a positive integer not exceeding the paid amount");
+        }
+        if (!event.data.reason.trim()) throw new Error("reason is required");
+        state = {
+          ...currentLead(state),
+          commission: { ...currentLead(state).commission!, clawback: { amountMinor: event.data.amountMinor, reason: event.data.reason.trim(), requestedAt: event.occurredAt } },
+          lastSequence,
+        };
         break;
       default:
         throw new Error(`unsupported event type: ${(event as { type: string }).type}`);

@@ -42,6 +42,13 @@ async function main() {
   const agentB = randomUUID();
   const leadA = randomUUID();
   const leadB = randomUUID();
+  // A non-admin identity in workspace A, linked to agentA. Migration 013's
+  // payouts UPDATE / payout_ledger INSERT policies are admin-only with no
+  // "assignee_id = current_agent_id" branch, so this identity exists purely
+  // to prove an agent cannot approve/pay out their own commission.
+  const agentUserA = randomUUID();
+  const payoutA = randomUUID();
+  const payoutEventA = randomUUID();
 
   await pool.query("begin");
   try {
@@ -54,13 +61,28 @@ async function main() {
       [agentA, workspaceA, agentB, workspaceB]
     );
     await pool.query(
-      "insert into tandem.members (workspace_id, user_id, role, agent_id) values ($1, $2, 'owner', null), ($3, $4, 'owner', null)",
-      [workspaceA, userA, workspaceB, userB]
+      "insert into tandem.members (workspace_id, user_id, role, agent_id) values ($1, $2, 'owner', null), ($3, $4, 'owner', null), ($5, $6, 'agent', $7)",
+      [workspaceA, userA, workspaceB, userB, workspaceA, agentUserA, agentA]
     );
     await pool.query(
       `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
        values ($1, $2, 'CI Lead A', 1, 'Won', $3), ($4, $5, 'CI Lead B', 1, 'Won', $6)`,
       [leadA, workspaceA, agentA, leadB, workspaceB, agentB]
+    );
+    // payouts.last_event_id is a NOT NULL FK into tandem.events(workspace_id, id),
+    // so the event has to exist before the payout can reference it.
+    await pool.query(
+      `insert into tandem.events
+         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'payout', $3, $4, 'ci', 'ci-payout-held-a', 'commission.held', $5, now())`,
+      [payoutEventA, workspaceA, payoutA, leadA, JSON.stringify({ payoutId: payoutA })]
+    );
+    await pool.query(
+      `insert into tandem.payouts
+         (id, workspace_id, lead_id, partner_id, amount_minor, currency, hold_days,
+          payment_confirmed_at, release_at, status, last_event_id)
+       values ($1, $2, $3, 'ci-partner', 1000, 'USD', 0, now(), now(), 'held', $4)`,
+      [payoutA, workspaceA, leadA, payoutEventA]
     );
     await pool.query("commit");
   } catch (error) {
@@ -73,7 +95,9 @@ async function main() {
   );
   check(
     "user A sees only workspace A's members",
-    membersAsA.rows.length === 1 && membersAsA.rows[0].workspace_id === workspaceA
+    // Two rows now that agentUserA also belongs to workspace A (the owner
+    // row and the agent row), but every one of them must be workspace A's.
+    membersAsA.rows.length === 2 && membersAsA.rows.every((row) => row.workspace_id === workspaceA)
   );
 
   const leadsAsA = await withTandemSession(pool, userA, (client) => client.query("select id from tandem.leads"));
@@ -101,6 +125,76 @@ async function main() {
     client.query("select id from tandem.leads")
   );
   check("a user with no membership anywhere sees zero leads", leadsAsStranger.rows.length === 0);
+
+  // Migration 013 added an admin-only UPDATE policy on tandem.payouts. An
+  // admin (workspace A's owner) must be able to move a payout through its
+  // lifecycle; without this grant/policy no app-layer writer running as
+  // `authenticated` could ever approve or pay a commission.
+  const adminApprove = await withTandemSession(pool, userA, (client) =>
+    client.query("update tandem.payouts set status = 'approved' where id = $1", [payoutA])
+  );
+  check("workspace A's admin can update payoutA's status", adminApprove.rowCount === 1);
+
+  const payoutAfterApprove = await withTandemSession(pool, userA, (client) =>
+    client.query("select status from tandem.payouts where id = $1", [payoutA])
+  );
+  check(
+    "payoutA's status actually changed to approved",
+    payoutAfterApprove.rows.length === 1 && payoutAfterApprove.rows[0].status === "approved"
+  );
+
+  // The same update as a non-admin agent in the same workspace must affect
+  // zero rows: payouts UPDATE is admin-only with no agent branch, even though
+  // payoutA is tied to this agent's own lead (leads.assignee_id = agentA).
+  // RLS on UPDATE with no matching USING clause returns 0 rows affected, not
+  // an error, so the row-count-affected pattern is the right assertion here.
+  const agentApprove = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.payouts set status = 'paid' where id = $1", [payoutA])
+  );
+  check("a non-admin agent cannot update any payout (0 rows affected)", agentApprove.rowCount === 0);
+
+  const payoutAfterAgentAttempt = await withTandemSession(pool, userA, (client) =>
+    client.query("select status from tandem.payouts where id = $1", [payoutA])
+  );
+  check(
+    "payoutA's status is unchanged after the agent's blocked update",
+    payoutAfterAgentAttempt.rows.length === 1 && payoutAfterAgentAttempt.rows[0].status === "approved"
+  );
+
+  // Cross-tenant: workspace B's owner updating workspace A's payout must also
+  // affect zero rows, same as the cross-tenant read check above.
+  const crossTenantUpdate = await withTandemSession(pool, userB, (client) =>
+    client.query("update tandem.payouts set status = 'voided' where id = $1", [payoutA])
+  );
+  check("user B's update of workspace A's payout affects zero rows", crossTenantUpdate.rowCount === 0);
+
+  // Migration 013 also added an admin-only INSERT policy on
+  // tandem.payout_ledger. An admin must be able to record a transition...
+  const adminLedgerInsert = await withTandemSession(pool, userA, (client) =>
+    client.query(
+      `insert into tandem.payout_ledger (workspace_id, payout_id, event_id, from_status, to_status)
+       values ($1, $2, $3, 'held', 'approved')`,
+      [workspaceA, payoutA, payoutEventA]
+    )
+  );
+  check("workspace A's admin can insert a payout_ledger row", adminLedgerInsert.rowCount === 1);
+
+  // ...but a non-admin agent cannot. Unlike UPDATE, RLS on INSERT with a
+  // failing WITH CHECK raises a policy violation error rather than silently
+  // affecting 0 rows, so this check PASSES when the insert throws.
+  let agentLedgerInsertBlocked = false;
+  try {
+    await withTandemSession(pool, agentUserA, (client) =>
+      client.query(
+        `insert into tandem.payout_ledger (workspace_id, payout_id, event_id, from_status, to_status)
+         values ($1, $2, $3, 'held', 'approved')`,
+        [workspaceA, payoutA, payoutEventA]
+      )
+    );
+  } catch {
+    agentLedgerInsertBlocked = true;
+  }
+  check("a non-admin agent cannot insert a payout_ledger row", agentLedgerInsertBlocked);
 
   await pool.end();
 
