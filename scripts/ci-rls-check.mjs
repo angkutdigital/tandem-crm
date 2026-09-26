@@ -74,11 +74,20 @@ scripts/ci-rls-check.mjs
        values ($1, $2, 'CI Lead A', 1, 'Won', $3), ($4, $5, 'CI Lead B', 1, 'Won', $6)`,
       [leadA, workspaceA, agentA, leadB, workspaceB, agentB]
     );
-    await pool.query("commit");
+    // payouts.last_event_id is a NOT NULL FK into tandem.events(workspace_id, id),
+    // so the event has to exist before the payout can reference it.
     await pool.query(
-      `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
-       values ($1, $2, 'CI Lead A', 1, 'Won', $3), ($4, $5, 'CI Lead B', 1, 'Won', $6)`,
-      [leadA, workspaceA, agentA, leadB, workspaceB, agentB]
+      `insert into tandem.events
+         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'payout', $3, $4, 'ci', 'ci-payout-held-a', 'commission.held', $5, now())`,
+      [payoutEventA, workspaceA, payoutA, leadA, JSON.stringify({ payoutId: payoutA })]
+    );
+    await pool.query(
+      `insert into tandem.payouts
+         (id, workspace_id, lead_id, partner_id, amount_minor, currency, hold_days,
+          payment_confirmed_at, release_at, status, last_event_id)
+       values ($1, $2, $3, 'ci-partner', 1000, 'USD', 0, now(), now(), 'held', $4)`,
+      [payoutA, workspaceA, leadA, payoutEventA]
     );
     await pool.query("commit");
   } catch (error) {
