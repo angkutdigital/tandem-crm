@@ -6,7 +6,22 @@ An embeddable, event-sourced CRM engine for Postgres: leads, agents, sales-cycle
 
 **Status:** in production use today, powering a real partner login and commission-tracking flow for the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; identity resolution and RLS are also verified against a plain, non-Supabase Postgres 16 instance, so implementing `TandemAuthAdapter` against Neon, RDS, Clerk, BetterAuth, or your own session table needs no changes to the package itself. See [CHANGELOG.md](./CHANGELOG.md) for what shipped when.
 
+## Module names
+
+The modules are getting brand names ahead of 1.0, for a coherent expedition theme instead of the current grab-bag. **This is a naming decision only, not done yet in code** — file names, event-type strings, table names, and the `tandem-nest` package name below still use the names on the left, and changing those is a separate, larger follow-up (event-type strings like `dispute.opened` are literally stored data other people's databases already contain, so renaming them needs a real migration path, not a find-replace). Docs and marketing copy should use the new names going forward; code identifiers haven't caught up yet.
+
+| Current (code) | Brand name | What it is |
+|---|---|---|
+| Core | **Terrain** | The ledger of facts everything else is built on: leads, money, permissions |
+| Nest (the reference dashboard / `tandem-nest` package) | **Camp** | The operator/admin workspace |
+| Ramp | **Ascent** | Agent onboarding and certification |
+| Routing | **Waypoint** | Assigning a lead or agent to the right next destination |
+| Coaster | **Belay** | The safety layer: disputes, holds, releases, resolution |
+| Trail | **Trail** | Unchanged — the per-lead activity record |
+
 ## What the package does
+
+This section describes Core — soon **Terrain** in copy, see the naming table above; `domain.ts` and the identifiers below are unchanged for now.
 
 - `domain.ts` qualifies a lead against installation config, defines typed business events, replays one lead from database append order, calculates an exact integer commission, and evaluates the escrow release instant.
 - `tandem.config.ts` supplies default qualification and hold settings. An installation may override them. Event payloads must snapshot the qualification result, commission amount/rule outcome, and `releaseAt` so later config edits cannot rewrite history.
@@ -98,17 +113,17 @@ The Supabase implementation lives outside the package at `src/lib/supabase/tande
 
 `TandemAdminAdapter.createMembership(workspaceId, userId, role, agentId)` creates the membership row linking an already-existing auth user to a workspace. It does **not** create the auth user itself: the caller must first create the user via the host auth provider (e.g. Supabase Auth's `inviteUserByEmail`) and pass the resulting `userId` in. The Supabase implementation runs with the calling user's own session, so it only succeeds if that user is already an owner/admin per the RLS policy on `tandem.members`.
 
-## Ramp: agent onboarding and certification
+## Ascent (Ramp): agent onboarding and certification
 
 Ramp tracks whether a sales agent/partner has completed a workspace-defined checklist of onboarding steps and is certified. Scope is deliberately narrow: no content authoring, no LMS, no quizzes, just step tracking and a certification state. Tandem never enforces what certification gates (a territory assignment, a commission rule, anything else); that decision belongs to the implementing application, the same way Core tracks business state without enforcing business policy.
 
 Onboarding events live in their own append-only log, `tandem.agent_events`, rather than `tandem.events`: events there require a `lead_id`, and onboarding events are scoped to an agent, not a lead. `replayAgentOnboardingEvents()` rebuilds one agent's state the same way `replayLeadEvents()` does; `isAgentCertified(state, requiredStepCodes)` checks both `certifiedAt` and that every currently-required step is actually in the completed list, so the answer stays correct even if a workspace adds a new required step after an agent was certified under the old list. In that case an owner/admin appends `onboarding.reopened`; it preserves the earlier certification fact, lets the agent complete the new requirement, and permits a fresh certification without deleting audit history.
 
-## Lead routing
+## Waypoint (Routing): lead routing
 
 A workspace can set an auto-assignment preset in `tandem.routing_settings`: `round_robin` (the default; absence of a row means round-robin), `least_loaded`, or `manual` (routing is a no-op, matching what happens today by default). `selectAgentForLead(candidates, strategy, lastAssignedAgentId)` is the pure decision function: the caller queries the eligible agents (already filtered by territory coverage via `tandem.agent_territories`) and their open lead counts, calls this function, then appends the resulting `lead.assigned` event itself. Tandem recommends; it does not assign.
 
-## Coaster: disputes on a commission
+## Belay (Coaster): disputes on a commission
 
 Coaster tracks a partner-initiated dispute against a commission that's already held, eligible, or approved, and an operator's resolution of it. Partners can open a dispute; only a workspace owner or admin can resolve one, enforced by the database's own row-level security, not just application convention. Three categories, matching how Awin (the largest affiliate network in Europe) models this: `untracked` ("this sale never showed up"), `incorrect` (the amount is wrong; carries an `expectedAmountMinor`), and `declined` ("this should have been approved"). An operator can also ask a question (`dispute.queried`) before resolving.
 
@@ -130,7 +145,7 @@ Trail events live in their own append-only log, `tandem.trail_events`, projected
 
 Tandem's target shape is a real embeddable CRM: leads, agents, sales-cycle activity, partner commissions, and disputes as one product, installed the way Payload or Tina install — not a commission engine with a CRM label loosely attached. Concretely, still ahead:
 
-- **An installable admin package**, separate from the engine, mounted into a host's own Next.js app with config rather than forked as example code. Kept as a separate package deliberately: a host who only wants the engine should never pay for the admin's chart/data-grid/drag-and-drop dependencies. Measured directly (real `npm install` + `du -sh`, not estimates): the whole `tandem-crm` engine plus its one dependency (`pg`) is about 1 MB; a realistic Payload install is ~433 MB beyond a bare Next.js app, and a realistic Tina install is ~650 MB beyond the same baseline. The engine was never going to be the weight problem — keeping the eventual admin package that light is the actual engineering goal, and neither Payload nor Tina has fully solved it either (Tina's own admin-bundle-size issue is still open upstream).
+- **An installable admin package** (brand name Camp, package name `tandem-nest` in code for now — see [Module names](#module-names)), separate from the engine, mounted into a host's own Next.js app with config rather than forked as example code. Kept as a separate package deliberately: a host who only wants the engine should never pay for the admin's chart/data-grid/drag-and-drop dependencies. Measured directly (real `npm install` + `du -sh`, not estimates): the whole `tandem-crm` engine plus its one dependency (`pg`) is about 1 MB; a realistic Payload install is ~433 MB beyond a bare Next.js app, and a realistic Tina install is ~650 MB beyond the same baseline. The engine was never going to be the weight problem — keeping the eventual admin package that light is the actual engineering goal, and neither Payload nor Tina has fully solved it either (Tina's own admin-bundle-size issue is still open upstream).
 - **A formal payout adapter**, mirroring `TandemAuthAdapter`'s shape, with a reference implementation against Stripe Connect. Tandem already never moves money itself; this makes that plug point a documented interface instead of an implicit convention.
 - **Sales stage as a first-class lead field**, not buried inside a Trail entry (see the Trail section above).
 

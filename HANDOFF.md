@@ -3,6 +3,59 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-26): module rename decided — brand names locked, code rename not started
+
+Read this before writing marketing copy, README text, illustrations, or
+anything else that names a module. The owner locked in a rename to fix
+the current grab-bag of module names (a climbing plant, a bird's home, a
+loading dock, a generic word, an amusement ride — no shared theme) into a
+coherent expedition metaphor:
+
+| Current (code) | Brand name | What it is |
+|---|---|---|
+| Core | **Terrain** | The ledger of facts everything else is built on |
+| Nest (the reference dashboard / `tandem-nest` package, see `packages/nest`) | **Camp** | The operator/admin workspace |
+| Ramp | **Ascent** | Agent onboarding and certification |
+| Routing | **Waypoint** | Assigning a lead/agent to the right next destination |
+| Coaster | **Belay** | The safety layer: disputes, holds, releases, resolution |
+| Trail | **Trail** | Unchanged |
+
+**Names that were considered and rejected, and why, so nobody re-proposes
+them:** Summit for Core (called out as sounding cringy). Compass for Core
+(creates real thematic overlap with Waypoint — both would be navigation
+instruments in the same six-word system; Waypoint already owns "which way
+next"). Atlas for Core (MongoDB Atlas is one of the most-used
+database-as-a-service brands in existence, and Tandem is a database-adjacent
+product — this collision actively confuses the exact audience Tandem wants).
+Basecamp for Nest (a direct, serious collision with one of the most
+recognized SaaS products in the industry — 37signals' Basecamp — not a
+borderline case, ruled out without much debate). Bedrock for Core (AWS
+Bedrock is a major, current, prominent product in exactly Tandem's
+infrastructure space).
+
+**Status: naming decision only, done in README.md and here. Nothing in
+code has been renamed.** File names (`ramp.ts`, `coaster.ts`, `routing.ts`),
+the `tandem-nest` package name, table names (`tandem.dispute_events`,
+`tandem.agent_events`, etc.), and — critically — **event-type strings**
+(`dispute.opened`, `onboarding.certified`, etc.) all still use the old
+names. That last category is the reason this isn't a quick find-replace
+whenever it does happen: event-type strings are literally stored data.
+Anyone with a real `tandem.events`/`tandem.dispute_events`/etc. table
+already has rows with `event_type = 'dispute.opened'` in them, and this
+package's whole design principle is "unknown event types fail replay
+instead of silently advancing the sequence" (see README's "What the
+package does"). Renaming the stored strings without a real migration path
+would make every existing installation's history unreadable. A future
+code-level rename needs to either keep the event-type strings as
+internal-only naming (rename only the module/file/export names, never the
+stored `event_type` values) or ship a real migration that rewrites
+existing rows — that's a decision for whoever picks up the code rename,
+not a default to assume.
+
+Docs and marketing copy (README, this file, the marketing site, any
+illustrations) should use the new brand names starting now. Code stays on
+the old names until a deliberate, separate rename pass.
+
 ## Update (2026-09-26): product direction correction — this is an embeddable CRM, not just a commission engine
 
 Read this before writing any more copy, README text, or roadmap language.
