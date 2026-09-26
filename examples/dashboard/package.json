@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm install --prefix ../.. && npm run build --prefix ../.. && npm run build --prefix ../../packages/camp && next build",
+    "build": "npm install --prefix ../.. --include=dev && npm run build --prefix ../.. && npm run build --prefix ../../packages/camp && next build",
     "start": "next start",
     "lint": "eslint"
   },
