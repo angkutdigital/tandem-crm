@@ -22,7 +22,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nest",
+  title: "Camp",
   description: "Partner commissions, onboarding, disputes, and payouts for a Tandem workspace.",
 };
 

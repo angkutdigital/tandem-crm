@@ -4,7 +4,7 @@ import { eventIdempotencyKey } from "./domain.js";
  * activity log for an agent working a lead, not a full CRM object model.
  * If a real deployment needs more structure than this (a formal objection
  * taxonomy, multiple contacts per lead, etc.), that belongs in their own
- * app's schema, not Core or here -- same split Coaster and Ramp already
+ * app's schema, not Terrain or here -- same split Belay and Ascent already
  * draw between "what Tandem tracks" and "what your product decides to do
  * with it." */
 export const trailVisitChannels = ["phone", "physical", "email"] as const;

@@ -33,9 +33,9 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/payouts", label: "Payouts", icon: Wallet },
   { href: "/earnings", label: "Earnings", icon: ChartNoAxesCombined },
   { href: "/disputes", label: "Disputes", icon: Scale },
-  // Routing policy is an owner-level decision; see app/settings/routing/page.tsx's
+  // Routing policy is an owner-level decision; see app/settings/waypoint/page.tsx's
   // own server-side check for why this isn't just a client-side nicety.
-  { href: "/settings/routing", label: "Routing", icon: Route, ownerOnly: true },
+  { href: "/settings/waypoint", label: "Waypoint", icon: Route, ownerOnly: true },
   { href: "/settings/setup", label: "Workspace setup", icon: Settings2, managerOnly: true },
 ];
 

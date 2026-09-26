@@ -3,6 +3,47 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-27): module rename done in code — Terrain/Ascent/Waypoint/Belay/Camp
+
+Follow-up to the naming-decision entry directly below this one (kept for
+the rejected-name reasoning — don't delete it). **Code is renamed now,
+not just docs:**
+
+- `src/ramp.ts` → `ascent.ts`, `src/routing.ts` → `waypoint.ts`,
+  `src/coaster.ts` → `belay.ts` (plus their test files). `ascent.ts` and
+  `belay.ts` needed nothing beyond the file move — their exports
+  (`AgentOnboardingEvent`, `DisputeEvent`, `replayDisputeEvents`, etc.)
+  were already domain-named, not brand-named, confirmed by grep before
+  touching anything. `waypoint.ts` did have real brand-word identifiers:
+  `RoutingStrategy` → `WaypointStrategy`, `RoutingCandidate` →
+  `WaypointCandidate`.
+- `tandem.routing_settings` was the one real schema identifier using the
+  old brand word (checked: `onboarding_steps`, `agent_events`,
+  `dispute_events`, etc. were already domain-named, no schema change
+  needed for those). Migration `018_tandem_waypoint_rename.sql` renames
+  the table and its four RLS policies via `ALTER ... RENAME`, not a
+  drop/recreate, so an existing installation keeps its data.
+- **Event-type strings were deliberately left alone**, per the caution in
+  the entry below — `dispute.opened`, `onboarding.certified`, etc. are
+  still the old domain words. They were never actually brand names (no
+  event type ever said "coaster" or "ramp"), so there was nothing to
+  rename there in the first place; the caution below about not touching
+  stored event-type strings without a migration path remains the rule if
+  anyone ever does want to touch them.
+- `packages/nest` → `packages/camp`, package name `tandem-nest` →
+  `tandem-camp`, `mountTandemAdmin()` → `mountTandemCamp()`.
+- The reference dashboard's own branding (sidebar text, page title,
+  `/settings/routing` → `/settings/waypoint` route and its nav link) and
+  its `lib/`/`components/` identifiers (`getRoutingStrategy` →
+  `getWaypointStrategy`, `setRoutingStrategy` → `setWaypointStrategy`,
+  `RoutingStrategyForm` → `WaypointStrategyForm`, file renamed to
+  `waypoint-strategy-form.tsx`) all updated to match.
+- README.md rewritten clean with the new names only — no old-name
+  mentions, no rejected-names reasoning (that stays here in HANDOFF,
+  which is what it's for).
+- Verified: 89/89 domain tests, root typecheck/build, dashboard
+  typecheck/build all pass after a full sweep.
+
 ## Update (2026-09-26): module rename decided — brand names locked, code rename not started
 
 Read this before writing marketing copy, README text, illustrations, or

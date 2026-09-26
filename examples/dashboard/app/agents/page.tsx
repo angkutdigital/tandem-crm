@@ -18,7 +18,7 @@ export default async function AgentsPage() {
   const member = await requireCurrentMember();
 
   // Agents have a useful self-service page, but do not see a misleading
-  // workspace roster: Ramp's RLS deliberately hides colleagues' onboarding
+  // workspace roster: Ascent's RLS deliberately hides colleagues' onboarding
   // state from them. Owners/admins get the real operational roster below.
   if (member.role === "agent") {
     if (member.agentId) redirect(`/agents/${member.agentId}`);

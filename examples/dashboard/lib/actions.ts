@@ -20,7 +20,7 @@ import {
 import { withTandemSession } from "tandem-crm/db";
 import { pool, WORKSPACE_ID } from "./db";
 import { setDemoUser } from "./auth";
-import { requireCurrentMember, getOnboardingSteps, getRoutingStrategy } from "./queries";
+import { requireCurrentMember, getOnboardingSteps, getWaypointStrategy } from "./queries";
 
 async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): Promise<TandemEvent[]> {
   const result = await client.query<{
@@ -205,7 +205,7 @@ export async function assignLead(leadId: string, agentId?: string): Promise<void
 
     if (!resolvedAgentId) {
       if (!territoryId) throw new Error("lead has no territory to route within");
-      const strategy = await getRoutingStrategy(member.userId);
+      const strategy = await getWaypointStrategy(member.userId);
       const candidatesResult = await client.query<{ agent_id: string; open_lead_count: string }>(
         `select at.agent_id, (
            select count(*) from tandem.leads l
@@ -318,7 +318,7 @@ export async function reopenAgentCertification(agentId: string): Promise<void> {
   await appendOnboardingEvent(agentId, "onboarding.reopened", {});
 }
 
-/** A profile is deliberately separate from login provisioning: Nest can create
+/** A profile is deliberately separate from login provisioning: Camp can create
  * the operational agent record, while the host's auth system remains the only
  * authority that links a real sign-in identity through tandem.members. */
 export async function createAgentProfile(input: {
@@ -399,7 +399,7 @@ export async function createTerritory(input: { name: string; code: string }): Pr
     )
   );
   revalidatePath("/settings/setup");
-  revalidatePath("/settings/routing");
+  revalidatePath("/settings/waypoint");
 }
 
 export async function assignAgentToTerritory(agentId: string, territoryId: string): Promise<void> {
@@ -483,16 +483,16 @@ export async function linkExistingUserToAgent(input: { userId: string; agentId: 
   revalidatePath("/settings/setup");
 }
 
-export async function setRoutingStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
+export async function setWaypointStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
   const member = await requireCurrentMember();
   await withTandemSession(pool, member.userId, (client) =>
     client.query(
-      `insert into tandem.routing_settings (workspace_id, strategy, updated_at) values ($1, $2, now())
+      `insert into tandem.waypoint_settings (workspace_id, strategy, updated_at) values ($1, $2, now())
        on conflict (workspace_id) do update set strategy = excluded.strategy, updated_at = now()`,
       [WORKSPACE_ID, strategy]
     )
   );
-  revalidatePath("/settings/routing");
+  revalidatePath("/settings/waypoint");
 }
 
 /** The one place a brand-new lead enters the system through this dashboard
@@ -611,7 +611,7 @@ export async function resolveDispute(disputeId: string, outcome: "upheld" | "dis
 }
 
 /** Acting on an upheld dispute is a separate, explicit step from resolving
- * it (see coaster.ts and migration 011's comments) -- the operator reviews
+ * it (see belay.ts and migration 011's comments) -- the operator reviews
  * the resolved dispute, picks the category-appropriate action below, and
  * this appends the matching Core event via appendLeadEvent, which already
  * validates the transition through domain.ts's reducer before writing
@@ -626,7 +626,7 @@ export async function executeDisputeOutcome(
 ): Promise<void> {
   const member = await requireCurrentMember();
   const idempotency = {
-    source: "coaster-dispute",
+    source: "belay-dispute",
     sourceEventId: `dispute:${disputeId}:outcome`,
   };
   const result = await withTandemSession(pool, member.userId, async (client) => {

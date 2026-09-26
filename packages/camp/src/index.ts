@@ -1,5 +1,5 @@
 /**
- * tandem-nest: Tandem's installable admin, in progress.
+ * tandem-camp: Tandem's installable admin, in progress.
  *
  * This package exists as its own npm package -- not a subpath of
  * tandem-crm -- specifically so installing the engine never pulls in an
@@ -11,8 +11,8 @@
  * route by route, behind a real mount API, is the next work -- not a
  * config flag to flip.
  */
-export function mountTandemAdmin(): never {
+export function mountTandemCamp(): never {
   throw new Error(
-    "tandem-nest is not implemented yet. See examples/dashboard for the current reference dashboard, and this package's README for where the installable admin is headed."
+    "tandem-camp is not implemented yet. See examples/dashboard for the current reference dashboard, and this package's README for where the installable admin is headed."
   );
 }

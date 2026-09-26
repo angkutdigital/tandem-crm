@@ -193,7 +193,7 @@ async function main() {
     );
 
     await client.query(
-      `insert into tandem.routing_settings (workspace_id, strategy) values ($1, 'round_robin')`,
+      `insert into tandem.waypoint_settings (workspace_id, strategy) values ($1, 'round_robin')`,
       [WORKSPACE_ID]
     );
 

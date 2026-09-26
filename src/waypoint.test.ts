@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { selectAgentForLead, type RoutingCandidate } from "./index.js";
+import { selectAgentForLead, type WaypointCandidate } from "./index.js";
 
-const candidates: RoutingCandidate[] = [
+const candidates: WaypointCandidate[] = [
   { agentId: "agent-b", openLeadCount: 3 },
   { agentId: "agent-a", openLeadCount: 1 },
   { agentId: "agent-c", openLeadCount: 1 },
 ];
 
-describe("Tandem lead routing", () => {
+describe("Tandem lead routing (Waypoint)", () => {
   it("assigns no one when there are no candidates", () => {
     expect(selectAgentForLead([], "round_robin", null)).toBeNull();
   });
@@ -48,7 +48,7 @@ describe("Tandem lead routing", () => {
   });
   it("rejects an unsupported strategy", () => {
     expect(() => selectAgentForLead(candidates, "auction" as never, null)).toThrow(
-      "unsupported routing strategy: auction"
+      "unsupported waypoint strategy: auction"
     );
   });
 });

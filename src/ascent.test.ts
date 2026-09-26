@@ -17,7 +17,7 @@ function inProgress(): AgentOnboardingEvent[] {
 }
 const replay = (events: AgentOnboardingEvent[]) => replayAgentOnboardingEvents(events, "workspace-1", "agent-1");
 
-describe("Tandem Ramp deterministic replay", () => {
+describe("Tandem Ascent deterministic replay", () => {
   it("replays by database sequence and ignores an exact retry", () => {
     const events = inProgress();
     const result = replay([events[2], events[0], events[1], { ...events[1] }]);
@@ -55,7 +55,7 @@ describe("Tandem Ramp deterministic replay", () => {
   });
 });
 
-describe("Tandem Ramp certification", () => {
+describe("Tandem Ascent certification", () => {
   const requiredSteps = ["agreement_signed", "product_training"];
   it("is not certified before onboarding starts", () => {
     expect(isAgentCertified(null, requiredSteps)).toBe(false);

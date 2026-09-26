@@ -140,7 +140,7 @@ export function replayDisputeEvents(events: readonly DisputeEvent[], workspaceId
 
 /** Snapshot this value in dispute.opened; open disputes do not follow later config edits.
  * Tandem does not hardcode a default window (75 days is Awin's own default, not a rule this
- * package enforces); the caller decides the day count, the same way routing.ts takes a
+ * package enforces); the caller decides the day count, the same way waypoint.ts takes a
  * strategy instead of picking one itself. */
 export function disputeAutoApproveAt(openedAt: string, autoApproveDays: number): string {
   const openedAtMs = instant(openedAt);

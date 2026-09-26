@@ -108,7 +108,7 @@ async function main() {
                'open', now() - interval '2 days', now() - interval '1 day')`,
       [overdueDisputeA, workspaceA, leadA, payoutA, agentA]
     );
-    // This second, still-open projection exists solely to exercise Coaster's
+    // This second, still-open projection exists solely to exercise Belay's
     // interactive RLS boundary below. The overdue dispute is intentionally
     // consumed by the scheduler test, so it cannot also model an open case.
     await pool.query(
@@ -192,7 +192,7 @@ async function main() {
   );
   check("a user with no membership anywhere sees zero leads", leadsAsStranger.rows.length === 0);
 
-  // Core creation is an event plus a projection in one transaction. This
+  // Terrain creation is an event plus a projection in one transaction. This
   // verifies migration 016's narrow admin-only INSERT permission, which the
   // reference dashboard uses for its New lead flow.
   const adminCreatedLead = await withTandemSession(pool, userA, async (client) => {
@@ -264,7 +264,7 @@ async function main() {
   }
   check("an agent cannot append an event for another workspace's lead", agentCrossTenantEventBlocked);
 
-  // Nest's Add agent action uses this existing Core configuration boundary:
+  // Camp's Add agent action uses this existing Terrain configuration boundary:
   // a manager can create an operational profile, but an agent cannot grant
   // themselves teammates or a cross-tenant profile.
   const adminCreatedAgent = await withTandemSession(pool, userA, (client) =>
@@ -293,8 +293,8 @@ async function main() {
   );
   check("workspace B's owner cannot read workspace A's agent profile", crossTenantAgentRead.rows.length === 0);
 
-  // Nest's territory setup and coverage controls use the same manager-only
-  // configuration policy as the rest of Core. Routing candidates depend on
+  // Camp's territory setup and coverage controls use the same manager-only
+  // configuration policy as the rest of Terrain. Waypoint candidates depend on
   // these rows, so test the boundary directly rather than trusting the UI.
   const adminTerritoryCreate = await withTandemSession(pool, userA, (client) =>
     client.query(
@@ -343,7 +343,7 @@ async function main() {
   );
   check("workspace B's owner cannot read workspace A's territory", crossTenantTerritoryRead.rows.length === 0);
 
-  // Nest's commission-policy form only writes the existing Core config table.
+  // Camp's commission-policy form only writes the existing Terrain config table.
   // The rule is intentionally not a payout mutation: a host adapter chooses
   // when to use it while appending a new commission event.
   const adminCommissionPolicy = await withTandemSession(pool, userA, (client) =>
@@ -376,7 +376,7 @@ async function main() {
   );
   check("workspace B's owner cannot read workspace A's commission policy", crossTenantCommissionRead.rows.length === 0);
 
-  // A portable host creates its own account first, then Nest may link that
+  // A portable host creates its own account first, then Camp may link that
   // UUID to an agent profile. This proves the manager-only membership insert
   // cannot become an agent privilege-escalation path.
   const adminMembershipLink = await withTandemSession(pool, userA, (client) =>
@@ -402,7 +402,7 @@ async function main() {
   }
   check("an agent cannot link another host account", agentMembershipLinkBlocked);
 
-  // Ramp's template is admin-managed; the agent owns the normal progress
+  // Ascent's template is admin-managed; the agent owns the normal progress
   // events for their own profile, while an explicit reopening of a past
   // certification is an admin decision.
   const adminOnboardingStep = await withTandemSession(pool, userA, (client) =>
@@ -479,40 +479,40 @@ async function main() {
   );
   check("workspace B's owner cannot read workspace A's onboarding", crossTenantOnboardingRead.rows.length === 0);
 
-  // Routing is workspace configuration: every member may read the current
+  // Waypoint is workspace configuration: every member may read the current
   // strategy, but only an owner/admin may create or change it.
   const adminRoutingInsert = await withTandemSession(pool, userA, (client) =>
     client.query(
-      "insert into tandem.routing_settings (workspace_id, strategy) values ($1, 'round_robin')",
+      "insert into tandem.waypoint_settings (workspace_id, strategy) values ($1, 'round_robin')",
       [workspaceA]
     )
   );
-  check("a workspace admin can set routing strategy", adminRoutingInsert.rowCount === 1);
+  check("a workspace admin can set waypoint strategy", adminRoutingInsert.rowCount === 1);
 
   const agentRoutingRead = await withTandemSession(pool, agentUserA, (client) =>
-    client.query("select strategy from tandem.routing_settings where workspace_id = $1", [workspaceA])
+    client.query("select strategy from tandem.waypoint_settings where workspace_id = $1", [workspaceA])
   );
   check(
-    "an agent can read their workspace routing strategy",
+    "an agent can read their workspace waypoint strategy",
     agentRoutingRead.rows.length === 1 && agentRoutingRead.rows[0].strategy === "round_robin"
   );
 
   const agentRoutingUpdate = await withTandemSession(pool, agentUserA, (client) =>
-    client.query("update tandem.routing_settings set strategy = 'manual' where workspace_id = $1", [workspaceA])
+    client.query("update tandem.waypoint_settings set strategy = 'manual' where workspace_id = $1", [workspaceA])
   );
-  check("an agent cannot change routing strategy", agentRoutingUpdate.rowCount === 0);
+  check("an agent cannot change waypoint strategy", agentRoutingUpdate.rowCount === 0);
 
   const crossTenantRoutingRead = await withTandemSession(pool, userB, (client) =>
-    client.query("select strategy from tandem.routing_settings where workspace_id = $1", [workspaceA])
+    client.query("select strategy from tandem.waypoint_settings where workspace_id = $1", [workspaceA])
   );
-  check("workspace B's owner cannot read workspace A's routing strategy", crossTenantRoutingRead.rows.length === 0);
+  check("workspace B's owner cannot read workspace A's waypoint strategy", crossTenantRoutingRead.rows.length === 0);
 
   const adminRoutingUpdate = await withTandemSession(pool, userA, (client) =>
-    client.query("update tandem.routing_settings set strategy = 'least_loaded' where workspace_id = $1", [workspaceA])
+    client.query("update tandem.waypoint_settings set strategy = 'least_loaded' where workspace_id = $1", [workspaceA])
   );
-  check("a workspace admin can change routing strategy", adminRoutingUpdate.rowCount === 1);
+  check("a workspace admin can change waypoint strategy", adminRoutingUpdate.rowCount === 1);
 
-  // Trail follows Core's own-lead rule: an assigned agent may append and
+  // Trail follows Terrain's own-lead rule: an assigned agent may append and
   // correct activity on their lead, but may never touch another tenant's
   // history. The event log stays append-only; the entry is a projection.
   const agentTrailEvent = await withTandemSession(pool, agentUserA, (client) =>
@@ -564,7 +564,7 @@ async function main() {
   }
   check("an agent cannot append Trail activity in another workspace", agentCrossTenantTrailBlocked);
 
-  // Coaster must follow the same tenant and role boundaries as Core: the
+  // Belay must follow the same tenant and role boundaries as Terrain: the
   // assigned agent can read their own lead's dispute, but only a workspace
   // admin may append an operator question or resolution.
   const disputesAsAgent = await withTandemSession(pool, agentUserA, (client) =>
