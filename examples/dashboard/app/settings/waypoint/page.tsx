@@ -2,7 +2,7 @@ import { getWaypointStrategy, requireCurrentMember } from "@/lib/queries";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { WaypointStrategyForm } from "@/components/waypoint-strategy-form";
 
-export default async function RoutingSettingsPage() {
+export default async function WaypointSettingsPage() {
   const member = await requireCurrentMember();
 
   // Routing policy is an owner-level decision, not something an agent or
@@ -25,7 +25,7 @@ export default async function RoutingSettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
       <header className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Routing</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Waypoint</h1>
       </header>
 
       <Card>

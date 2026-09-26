@@ -318,7 +318,7 @@ export async function reopenAgentCertification(agentId: string): Promise<void> {
   await appendOnboardingEvent(agentId, "onboarding.reopened", {});
 }
 
-/** A profile is deliberately separate from login provisioning: Nest can create
+/** A profile is deliberately separate from login provisioning: Camp can create
  * the operational agent record, while the host's auth system remains the only
  * authority that links a real sign-in identity through tandem.members. */
 export async function createAgentProfile(input: {

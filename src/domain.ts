@@ -111,7 +111,7 @@ export type CommissionState = {
   releaseAt: string;
   status: "held" | "eligible" | "approved" | "paid" | "voided";
   /** Set once money already paid out needs to be recovered outside Tandem
-   * (a Coaster dispute upheld against a paid commission, or a refund that
+   * (a Belay dispute upheld against a paid commission, or a refund that
    * arrives after payout). Tandem never reverses a real payment itself;
    * this is a record for the host app to act on (deduct a future payout,
    * invoice the agent, etc.), the same non-enforcement split as everywhere
@@ -233,9 +233,9 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         requireTransition(state !== null && state.commission !== null && ["held", "eligible", "approved"].includes(state.commission.status) && state.commission.payoutId === event.data.payoutId, event.type);
         state = { ...currentLead(state), status: "Won", commission: { ...currentLead(state).commission!, status: "voided" }, lastSequence };
         break;
-      // The next three exist to let a caller (typically resolving a Coaster
+      // The next three exist to let a caller (typically resolving a Belay
       // dispute) act on an outcome. Tandem never appends these itself; see
-      // coaster.ts's dispute.resolved for the equivalent non-enforcement split.
+      // belay.ts's dispute.resolved for the equivalent non-enforcement split.
       case "commission.adjusted":
         requireTransition(state !== null && state.commission !== null && ["held", "eligible", "approved"].includes(state.commission.status) && state.commission.payoutId === event.data.payoutId, event.type);
         assertMoney(event.data.newAmountMinor, currentLead(state).commission!.currency);

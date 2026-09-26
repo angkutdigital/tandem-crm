@@ -1,7 +1,7 @@
 {
   "name": "tandem-crm",
   "version": "0.1.0",
-  "description": "The engine half of Tandem, an embeddable, event-sourced CRM for Postgres: leads, agents, sales activity, commissions, and disputes. No servers, no vendor lock-in. The installable admin (tandem-nest) is a separate package -- see packages/nest.",
+  "description": "The engine half of Tandem, an embeddable, event-sourced CRM for Postgres: leads, agents, sales activity, commissions, and disputes. No servers, no vendor lock-in. The installable admin (tandem-camp) is a separate package -- see packages/camp.",
   "license": "MIT",
   "type": "module",
   "workspaces": [
