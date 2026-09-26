@@ -13,8 +13,8 @@ function formatDate(value: string) {
   });
 }
 
-function formatCategory(category: DisputeSummary["category"]) {
-  return category.charAt(0).toUpperCase() + category.slice(1);
+function formatCategory(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 const statusVariantMap: Record<

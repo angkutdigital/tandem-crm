@@ -128,11 +128,20 @@ export function ExecuteOutcomeForm({ disputeId }: { disputeId: string }) {
     event.preventDefault();
     startTransition(async () => {
       try {
+        // The reinstate branch's <input type="datetime-local"> gives a local
+        // string like "2026-09-26T14:30" (no seconds, no timezone), but the
+        // domain reducer requires a full ISO 8601 instant -- convert before
+        // it ever reaches the server action, or every reinstate throws
+        // "timestamp must be an ISO 8601 instant".
+        const value =
+          action === "reinstate" && reasonOrReleaseAt
+            ? new Date(reasonOrReleaseAt).toISOString()
+            : reasonOrReleaseAt;
         await executeDisputeOutcome(
           disputeId,
           action,
           Number(amount),
-          needsReasonOrReleaseAt ? reasonOrReleaseAt : ""
+          needsReasonOrReleaseAt ? value : ""
         );
         setAmount("");
         setReasonOrReleaseAt("");

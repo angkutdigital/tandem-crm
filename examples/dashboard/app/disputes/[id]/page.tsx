@@ -29,8 +29,8 @@ function formatDateTime(value: string) {
   });
 }
 
-function formatCategory(category: DisputeDetail["category"]) {
-  return category.charAt(0).toUpperCase() + category.slice(1);
+function formatCategory(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 const statusVariantMap: Record<
