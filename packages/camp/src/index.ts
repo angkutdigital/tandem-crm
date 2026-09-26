@@ -1,18 +1,14 @@
 /**
- * tandem-camp: Tandem's installable admin, in progress.
+ * tandem-camp: Tandem's installable admin.
  *
- * This package exists as its own npm package -- not a subpath of
- * tandem-crm -- specifically so installing the engine never pulls in an
- * admin UI's dependencies (charts, drag-and-drop, a data grid, Next.js
- * itself). See this package's README for the measured size reasoning.
- *
- * Nothing here is real yet. The actual screens currently live as a
- * reference app in examples/dashboard; migrating them into this package,
- * route by route, behind a real mount API, is the next work -- not a
- * config flag to flip.
+ * A host mounts this the way `@payloadcms/next` mounts Payload's admin:
+ * one config module (calling mountTandemCamp once, imported for its side
+ * effect by every Camp route in the deployment) plus one catch-all route
+ * re-exporting CampRootPage. See this package's README for the exact host
+ * wiring and current migration status -- Overview, Leads, and Payouts are
+ * migrated from examples/dashboard today; the rest are not yet.
  */
-export function mountTandemCamp(): never {
-  throw new Error(
-    "tandem-camp is not implemented yet. See examples/dashboard for the current reference dashboard, and this package's README for where the installable admin is headed."
-  );
-}
+export { mountTandemCamp, type TandemCampConfig } from "./config.js";
+export { CampRootPage } from "./root.js";
+export * from "./queries.js";
+export * from "./actions.js";
