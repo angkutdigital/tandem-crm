@@ -1,10 +1,9 @@
 {
   "name": "tandem-camp",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Tandem's installable admin: mounts a full CRM interface (leads, agents, sales activity, commissions, disputes) into your own Next.js app, the way @payloadcms/next or tinacms mount into yours. Separate from the tandem-crm engine on purpose -- installing the engine alone never pulls this package's UI dependencies in.",
   "license": "MIT",
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -20,7 +19,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -36,7 +36,7 @@
     "nextjs"
   ],
   "dependencies": {
-    "tandem-crm": "file:../..",
+    "tandem-crm": "^0.1.0",
     "@base-ui/react": "^1.8.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
