@@ -10,6 +10,16 @@ for the current state).
 
 ### Added
 
+- Trail: CHAMP qualification (Challenges, Authority, Money, Prioritization)
+  as four new optional text fields on a visit report, alongside a new
+  `whatsapp` channel option. All five text fields (the pre-existing `note`
+  included) are now optional at both the domain-reducer and database
+  level, with a single check that at least one of the five has content --
+  a deliberately backward-compatible schema change so replaying every
+  pre-existing (pre-CHAMP) event still works unchanged. See migration
+  `020_tandem_trail_champ.sql` and `src/trail.ts`'s module comment for the
+  full reasoning.
+
 - Core: event log, projections, integer money math, idempotency, escrow
   release (`release_due_commissions()`, ready for `pg_cron`), and row-level
   security.

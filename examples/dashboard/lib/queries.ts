@@ -509,10 +509,19 @@ export async function getDisputeDetail(userId: string, disputeId: string): Promi
 
 export type TrailEntrySummary = {
   id: string;
-  channel: "phone" | "physical" | "email";
+  channel: "phone" | "physical" | "email" | "whatsapp";
   confidenceRating: number;
   salesStage: "New" | "Contacted" | "Qualified" | "Negotiating" | "Closed_Won" | "Closed_Lost";
-  note: string;
+  note: string | null;
+  /** CHAMP: the prospect's immediate workflow pain point. */
+  challenges: string | null;
+  /** CHAMP: who has the final say, or who else needs to be looped in. */
+  authority: string | null;
+  /** CHAMP: their realistic buying power for this deal (free text -- see
+   * src/trail.ts's own comment on why this isn't a typed amount). */
+  budget: string | null;
+  /** CHAMP: where solving this ranks on their own timeline. */
+  prioritization: string | null;
   loggedAt: string;
   correctedAt: string | null;
   retracted: boolean;
@@ -522,17 +531,20 @@ export async function getTrailEntries(userId: string, leadId: string): Promise<T
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
       id: string; channel: TrailEntrySummary["channel"]; confidence_rating: number;
-      sales_stage: TrailEntrySummary["salesStage"]; note: string;
+      sales_stage: TrailEntrySummary["salesStage"]; note: string | null;
+      challenges: string | null; authority: string | null; budget: string | null; prioritization: string | null;
       logged_at: string; corrected_at: string | null; retracted: boolean;
     }>(
-      `select id, channel, confidence_rating, sales_stage, note, logged_at, corrected_at, retracted
+      `select id, channel, confidence_rating, sales_stage, note, challenges, authority, budget, prioritization,
+              logged_at, corrected_at, retracted
        from tandem.trail_entries where lead_id = $1 and workspace_id = $2 order by logged_at asc`,
       [leadId, WORKSPACE_ID]
     )
   );
   return result.rows.map((row) => ({
     id: row.id, channel: row.channel, confidenceRating: row.confidence_rating, salesStage: row.sales_stage,
-    note: row.note, loggedAt: toISO(row.logged_at), correctedAt: toISO(row.corrected_at), retracted: row.retracted,
+    note: row.note, challenges: row.challenges, authority: row.authority, budget: row.budget, prioritization: row.prioritization,
+    loggedAt: toISO(row.logged_at), correctedAt: toISO(row.corrected_at), retracted: row.retracted,
   }));
 }
 

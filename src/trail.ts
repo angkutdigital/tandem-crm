@@ -1,13 +1,28 @@
 import { eventIdempotencyKey, leadSalesStages, type LeadSalesStage } from "./domain.js";
 
-/** Kept deliberately small and free-text-first: this is a lightweight
- * activity log for an agent working a lead, not a full CRM object model.
- * If a real deployment needs more structure than this (a formal objection
- * taxonomy, multiple contacts per lead, etc.), that belongs in their own
- * app's schema, not Terrain or here -- same split Belay and Ascent already
- * draw between "what Tandem tracks" and "what your product decides to do
- * with it." */
-export const trailVisitChannels = ["phone", "physical", "email"] as const;
+/** A lightweight activity log for an agent working a lead, structured
+ * around CHAMP (Challenges, Authority, Money, Prioritization) -- a
+ * deliberate choice, not the smallest possible shape: an owner decided
+ * this level of sales-qualification structure belongs in Trail itself
+ * rather than a host's own schema, because it's what the module's
+ * intended users (a solo agent qualifying a lead, not just logging that a
+ * call happened) actually need. Still not a full CRM object model: no
+ * formal objection taxonomy beyond these four fields, no multiple
+ * contacts per lead -- that split with "what your product decides to do
+ * with it" still holds for anything beyond CHAMP itself.
+ *
+ * Every field below is optional at this layer on purpose, CHAMP fields
+ * included: `tandem.trail_events` is append-only, and rows logged before
+ * CHAMP existed only ever had `note`, never `challenges`/`authority`/
+ * `budget`/`prioritization`. Requiring the new fields here would make
+ * every pre-existing installation's history fail replay the moment it
+ * upgrades -- the exact hazard this package's other event-shape changes
+ * (see HANDOFF.md) have always been careful about. `validateFields` below
+ * enforces the one floor that both old and new data already satisfy: at
+ * least one of the five text fields has real content. A host's own UI is
+ * free to require the full CHAMP set for new entries; the reducer itself
+ * never can, without breaking replay of history it doesn't control. */
+export const trailVisitChannels = ["phone", "physical", "email", "whatsapp"] as const;
 export type TrailVisitChannel = (typeof trailVisitChannels)[number];
 
 /** Re-exported from domain.ts under Trail's existing names: sales stage is
@@ -28,25 +43,33 @@ type TrailEventBase = {
   occurredAt: string;
 };
 
+/** The CHAMP fields, each optional -- see the module comment above for
+ * why the reducer itself can never require them. */
+type ChampFields = {
+  /** Challenges: the prospect's immediate workflow pain point. */
+  challenges?: string;
+  /** Authority: who has the final say, or who else needs to be looped in. */
+  authority?: string;
+  /** Money: their realistic buying power for this deal. Deliberately free
+   * text, not a typed amount -- this is a qualitative sales read, not a
+   * committed figure, and Trail has no currency context of its own to
+   * attach a real amount to (that's Terrain's `payment.confirmed`, a
+   * different, much stricter kind of fact). */
+  budget?: string;
+  /** Prioritization: where solving this ranks on their own timeline. */
+  prioritization?: string;
+};
+
+type TrailVisitData = ChampFields & {
+  channel: TrailVisitChannel;
+  confidenceRating: number;
+  salesStage: TrailSalesStage;
+  note?: string;
+};
+
 export type TrailEvent = TrailEventBase & (
-  | {
-      type: "trail.visit_logged";
-      data: {
-        channel: TrailVisitChannel;
-        confidenceRating: number;
-        salesStage: TrailSalesStage;
-        note: string;
-      };
-    }
-  | {
-      type: "trail.entry_corrected";
-      data: {
-        channel: TrailVisitChannel;
-        confidenceRating: number;
-        salesStage: TrailSalesStage;
-        note: string;
-      };
-    }
+  | { type: "trail.visit_logged"; data: TrailVisitData }
+  | { type: "trail.entry_corrected"; data: TrailVisitData }
   | { type: "trail.entry_retracted"; data: Record<string, never> }
 );
 
@@ -57,7 +80,11 @@ export type TrailEntryState = {
   channel: TrailVisitChannel;
   confidenceRating: number;
   salesStage: TrailSalesStage;
-  note: string;
+  note: string | null;
+  challenges: string | null;
+  authority: string | null;
+  budget: string | null;
+  prioritization: string | null;
   loggedAt: string;
   correctedAt: string | null;
   retracted: boolean;
@@ -87,12 +114,28 @@ function currentState(state: TrailEntryState | null): TrailEntryState {
   if (state === null) throw new Error("trail entry has not been logged");
   return state;
 }
-function validateFields(data: { channel: TrailVisitChannel; confidenceRating: number; salesStage: TrailSalesStage; note: string }): void {
-  if (!trailVisitChannels.includes(data.channel)) throw new Error("channel must be one of phone, physical, email");
+/** trim() a string field that predates this normalization, or a field that
+ * was never present at all -- both collapse to null, not "". A blank
+ * string and an absent field mean the same thing here: nothing was said. */
+function normalizeText(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function validateFields(data: {
+  channel: TrailVisitChannel; confidenceRating: number; salesStage: TrailSalesStage;
+  note?: string; challenges?: string; authority?: string; budget?: string; prioritization?: string;
+}): void {
+  if (!trailVisitChannels.includes(data.channel)) throw new Error("channel must be one of phone, physical, email, whatsapp");
   if (!Number.isSafeInteger(data.confidenceRating) || data.confidenceRating < 1 || data.confidenceRating > 10) {
     throw new Error("confidenceRating must be an integer from 1 to 10");
   }
   if (!trailSalesStages.includes(data.salesStage)) throw new Error("invalid salesStage");
+  const hasContent = [data.note, data.challenges, data.authority, data.budget, data.prioritization]
+    .some((field) => normalizeText(field) !== null);
+  if (!hasContent) {
+    throw new Error("at least one of note, challenges, authority, budget, or prioritization is required");
+  }
 }
 
 /** Rebuild one visit-report entry in append order, ignoring exact delivery
@@ -125,23 +168,25 @@ export function replayTrailEntryEvents(events: readonly TrailEvent[], workspaceI
       case "trail.visit_logged":
         requireTransition(state === null, event.type);
         validateFields(event.data);
-        if (!event.data.note.trim()) throw new Error("note is required");
         state = {
           workspaceId, leadId, entryId,
           channel: event.data.channel, confidenceRating: event.data.confidenceRating,
-          salesStage: event.data.salesStage, note: event.data.note.trim(),
+          salesStage: event.data.salesStage, note: normalizeText(event.data.note),
+          challenges: normalizeText(event.data.challenges), authority: normalizeText(event.data.authority),
+          budget: normalizeText(event.data.budget), prioritization: normalizeText(event.data.prioritization),
           loggedAt: event.occurredAt, correctedAt: null, retracted: false, lastSequence,
         };
         break;
       case "trail.entry_corrected":
         requireTransition(state !== null && !state.retracted, event.type);
         validateFields(event.data);
-        if (!event.data.note.trim()) throw new Error("note is required");
         if (occurredAtMs < instant(currentState(state).loggedAt)) throw new Error("a correction cannot occur before the entry it corrects");
         state = {
           ...currentState(state),
           channel: event.data.channel, confidenceRating: event.data.confidenceRating,
-          salesStage: event.data.salesStage, note: event.data.note.trim(),
+          salesStage: event.data.salesStage, note: normalizeText(event.data.note),
+          challenges: normalizeText(event.data.challenges), authority: normalizeText(event.data.authority),
+          budget: normalizeText(event.data.budget), prioritization: normalizeText(event.data.prioritization),
           correctedAt: event.occurredAt, lastSequence,
         };
         break;

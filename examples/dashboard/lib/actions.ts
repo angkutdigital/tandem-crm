@@ -742,15 +742,33 @@ async function loadTrailEvents(client: import("pg").PoolClient, leadId: string, 
   })) as TrailEvent[];
 }
 
-export type TrailInput = { channel: TrailVisitChannel; confidenceRating: number; salesStage: TrailSalesStage; note: string };
+export type TrailInput = {
+  channel: TrailVisitChannel;
+  confidenceRating: number;
+  salesStage: TrailSalesStage;
+  note?: string;
+  challenges?: string;
+  authority?: string;
+  budget?: string;
+  prioritization?: string;
+};
 
+/** Mirrors src/trail.ts's own validateFields exactly -- this is a
+ * clearer, earlier error for the dashboard's form, not a stricter rule
+ * than the domain reducer already enforces. CHAMP fields stay optional
+ * here too, for the same backward-compatibility reason: the reducer
+ * itself can never require them (see trail.ts), so this action-layer
+ * check can't either without becoming a lie about what the domain layer
+ * actually accepts. */
 function validateTrailInput(input: TrailInput): void {
   if (!trailVisitChannels.includes(input.channel)) throw new Error("invalid channel");
   if (!trailSalesStages.includes(input.salesStage)) throw new Error("invalid sales stage");
   if (!Number.isSafeInteger(input.confidenceRating) || input.confidenceRating < 1 || input.confidenceRating > 10) {
     throw new Error("confidence rating must be an integer from 1 to 10");
   }
-  if (!input.note.trim()) throw new Error("a note is required");
+  const hasContent = [input.note, input.challenges, input.authority, input.budget, input.prioritization]
+    .some((field) => field?.trim());
+  if (!hasContent) throw new Error("at least one of note, challenges, authority, budget, or prioritization is required");
 }
 
 export async function logTrailVisit(leadId: string, input: TrailInput): Promise<void> {
@@ -774,9 +792,10 @@ export async function logTrailVisit(leadId: string, input: TrailInput): Promise<
     );
     await client.query(
       `insert into tandem.trail_entries
-         (id, workspace_id, lead_id, channel, confidence_rating, sales_stage, note, logged_at, last_event_sequence)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [entryId, WORKSPACE_ID, leadId, state.channel, state.confidenceRating, state.salesStage, state.note, state.loggedAt, state.lastSequence]
+         (id, workspace_id, lead_id, channel, confidence_rating, sales_stage, note, challenges, authority, budget, prioritization, logged_at, last_event_sequence)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [entryId, WORKSPACE_ID, leadId, state.channel, state.confidenceRating, state.salesStage, state.note,
+        state.challenges, state.authority, state.budget, state.prioritization, state.loggedAt, state.lastSequence]
     );
     await syncLeadSalesStage(client, leadId, state.salesStage);
   });
@@ -822,9 +841,12 @@ async function appendTrailEvent(
     await client.query(
       `update tandem.trail_entries
        set channel = $2, confidence_rating = $3, sales_stage = $4, note = $5,
-           corrected_at = $6, retracted = $7, last_event_sequence = $8, updated_at = now()
-       where id = $1 and workspace_id = $9 and lead_id = $10`,
-      [entryId, state.channel, state.confidenceRating, state.salesStage, state.note, state.correctedAt, state.retracted, state.lastSequence, WORKSPACE_ID, leadId]
+           challenges = $6, authority = $7, budget = $8, prioritization = $9,
+           corrected_at = $10, retracted = $11, last_event_sequence = $12, updated_at = now()
+       where id = $1 and workspace_id = $13 and lead_id = $14`,
+      [entryId, state.channel, state.confidenceRating, state.salesStage, state.note,
+        state.challenges, state.authority, state.budget, state.prioritization,
+        state.correctedAt, state.retracted, state.lastSequence, WORKSPACE_ID, leadId]
     );
     if (!state.retracted) await syncLeadSalesStage(client, leadId, state.salesStage);
   });

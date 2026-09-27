@@ -8,7 +8,7 @@ function fact(sequence: number, type: TrailEvent["type"], data: TrailEvent["data
     source: "test", sourceEventId: `source-${sequence}`, occurredAt, type, data,
   } as TrailEvent;
 }
-type VisitFields = { channel: TrailVisitChannel; confidenceRating: number; salesStage: TrailSalesStage; note: string };
+type VisitFields = { channel: TrailVisitChannel; confidenceRating: number; salesStage: TrailSalesStage; note?: string; challenges?: string; authority?: string; budget?: string; prioritization?: string };
 const visit = (overrides: Partial<VisitFields> = {}): VisitFields => ({
   channel: "phone", confidenceRating: 6, salesStage: "Contacted", note: "Called, interested in pricing", ...overrides,
 });
@@ -42,7 +42,19 @@ describe("Trail deterministic replay", () => {
     expect(() => replayEntry([fact(1, "trail.visit_logged", visit({ confidenceRating: 0 }))])).toThrow("confidenceRating must be");
     expect(() => replayEntry([fact(1, "trail.visit_logged", visit({ confidenceRating: 11 }))])).toThrow("confidenceRating must be");
     expect(() => replayEntry([fact(1, "trail.visit_logged", visit({ salesStage: "Signed_In_Blood" as TrailSalesStage }))])).toThrow("invalid salesStage");
-    expect(() => replayEntry([fact(1, "trail.visit_logged", visit({ note: "   " }))])).toThrow("note is required");
+    expect(() => replayEntry([fact(1, "trail.visit_logged", visit({ note: "   " }))])).toThrow("at least one of note, challenges, authority, budget, or prioritization is required");
+  });
+  it("accepts a CHAMP field alone with no note, but rejects a visit with none of the five fields", () => {
+    const champOnly = replayEntry([fact(1, "trail.visit_logged", { ...visit(), note: undefined, challenges: "Needs faster onboarding" })]);
+    expect(champOnly).toMatchObject({ note: null, challenges: "Needs faster onboarding", authority: null, budget: null, prioritization: null });
+    expect(() =>
+      replayEntry([fact(1, "trail.visit_logged", { channel: "whatsapp", confidenceRating: 5, salesStage: "Contacted" })])
+    ).toThrow("at least one of note, challenges, authority, budget, or prioritization is required");
+  });
+  it("replays a pre-CHAMP historical event (note only, no CHAMP fields present at all) without error", () => {
+    const legacyEvent = { ...logged()[0], data: { channel: "phone", confidenceRating: 6, salesStage: "Contacted", note: "Called, interested in pricing" } } as TrailEvent;
+    const state = replayEntry([legacyEvent]);
+    expect(state).toMatchObject({ note: "Called, interested in pricing", challenges: null, authority: null, budget: null, prioritization: null });
   });
   it("rejects a correction dated before the entry it corrects", () => {
     expect(() =>

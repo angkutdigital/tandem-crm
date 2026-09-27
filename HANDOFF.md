@@ -3,6 +3,41 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-27): Trail CHAMP qualification shipped
+
+Agreed sequencing was "CHAMP first, then remaining Camp screens, then
+install-package publish mechanics, then launch." This closes step one.
+
+Added Challenges/Authority/Money(budget)/Prioritization as four new
+optional text fields on a Trail visit report, plus a `whatsapp` channel
+alongside phone/physical/email. The important constraint: this table
+already has real historical rows, all of which have a non-empty `note`
+and nothing in the four new columns, so every one of the five text
+fields (note included) had to become optional rather than any new field
+being required -- otherwise upgrading breaks replay of existing events.
+The floor is now "at least one of the five has content," enforced at
+three levels that all had to move together: `src/trail.ts`'s
+`validateFields`, the new `trail_entries_has_content_check` constraint
+in `db/migrations/020_tandem_trail_champ.sql`, and
+`examples/dashboard/lib/actions.ts`'s `validateTrailInput`.
+
+Verified: 94/94 unit tests (2 new, covering CHAMP-only entries with no
+note, and replay of a pre-CHAMP historical event shaped exactly like the
+old data), typecheck clean across `tandem-crm`/`tandem-camp`/dashboard,
+migration applied cleanly to both a fresh disposable DB and the live
+local dev DB (existing row's data survived untouched), full RLS suite
+(52/52) still green, and a real end-to-end browser test against the
+local dev DB: logged a `whatsapp`-channel, CHAMP-only entry (challenges
++ authority filled, budget/prioritization/note left blank) through the
+dashboard's actual "Log activity" dialog, confirmed the row landed
+correctly via direct SQL, and confirmed the timeline UI renders the new
+CHAMP grid (and correctly omits the note paragraph when there isn't
+one).
+
+Not yet migrated into Camp specifically -- Trail activity still only
+lives in the reference dashboard. That's explicitly scheduled as part
+of the next step (remaining Camp screens), not this one.
+
 ## Update (2026-09-27): Agents migrated to Camp (by hand, after two failed DeepSeek dispatches); live public demo shipped with a real-time event feed
 
 ### Agents migration
