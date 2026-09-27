@@ -8,8 +8,19 @@ for the current state).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-27
+
 ### Added
 
+- `tandem-camp`: the installable admin package (`packages/camp`) now has
+  every planned screen migrated from the reference dashboard and
+  live-verified against real Postgres -- Overview (manager and per-agent
+  views), Leads (list, kanban board, detail, full Trail/CHAMP activity),
+  Agents, Payouts, Earnings, Disputes, and Settings (workspace setup,
+  Waypoint routing strategy). Bumped to `0.1.0` alongside `tandem-crm`;
+  `private: true` removed and `tandem-crm` is now a real `^0.1.0`
+  dependency instead of a workspace-only `file:../..` path, so both
+  packages are ready for `npm publish`.
 - Trail: CHAMP qualification (Challenges, Authority, Money, Prioritization)
   as four new optional text fields on a visit report, alongside a new
   `whatsapp` channel option. All five text fields (the pre-existing `note`
