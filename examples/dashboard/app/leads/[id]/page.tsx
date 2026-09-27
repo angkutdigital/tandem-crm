@@ -97,6 +97,30 @@ export default async function LeadDetailPage(props: PageProps<"/leads/[id]">) {
       </header>
 
       <section className="grid gap-4 md:grid-cols-3">
+        {lead.contactName && (
+          <Card>
+            <CardHeader>
+              <CardDescription className="text-xs font-medium tracking-wide uppercase">
+                Person in charge
+              </CardDescription>
+              <CardTitle className="text-lg font-semibold">
+                {lead.contactName}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+        )}
+        {lead.address && (
+          <Card>
+            <CardHeader>
+              <CardDescription className="text-xs font-medium tracking-wide uppercase">
+                Address
+              </CardDescription>
+              <CardTitle className="text-lg font-semibold">
+                {lead.address}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+        )}
         <Card>
           <CardHeader>
             <CardDescription className="text-xs font-medium tracking-wide uppercase">

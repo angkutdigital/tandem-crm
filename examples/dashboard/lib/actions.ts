@@ -567,6 +567,11 @@ export async function createLead(input: {
   contactPhone: string;
   qualificationMetric: number;
   productTag: string;
+  /** PIC and address are optional and stored in `tandem.leads.attributes`
+   * (see queries.ts's readAttributes) instead of their own columns, so a
+   * host can add further ad hoc lead fields later without a migration. */
+  contactName?: string;
+  address?: string;
 }): Promise<string> {
   const member = await requireCurrentMember();
   if (!input.companyName.trim()) throw new Error("company name is required");
@@ -595,10 +600,13 @@ export async function createLead(input: {
        values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
       [newEvent.id, WORKSPACE_ID, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
     );
+    const attributes: Record<string, string> = {};
+    if (input.contactName?.trim()) attributes.contactName = input.contactName.trim();
+    if (input.address?.trim()) attributes.address = input.address.trim();
     await client.query(
-      `insert into tandem.leads (id, workspace_id, company_name, contact_phone, qualification_metric, product_tag, pipeline_status, last_event_sequence)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [leadId, WORKSPACE_ID, state.companyName, input.contactPhone.trim(), state.qualificationMetric, input.productTag.trim(), state.status, state.lastSequence]
+      `insert into tandem.leads (id, workspace_id, company_name, contact_phone, qualification_metric, product_tag, attributes, pipeline_status, last_event_sequence)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [leadId, WORKSPACE_ID, state.companyName, input.contactPhone.trim(), state.qualificationMetric, input.productTag.trim(), JSON.stringify(attributes), state.status, state.lastSequence]
     );
   });
   revalidatePath("/leads");

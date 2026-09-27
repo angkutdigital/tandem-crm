@@ -266,16 +266,31 @@ export type LeadSummary = {
   assigneeId: string | null;
   assigneeName: string | null;
   updatedAt: string;
+  /** PIC (person in charge) and address live in `tandem.leads.attributes`
+   * (a free-form jsonb column the schema already reserved for exactly this
+   * -- "Dynamic lead data is JSON, never columns invented per source") --
+   * not their own columns, so a host app can add further ad hoc fields
+   * later without another migration. */
+  contactName: string | null;
+  address: string | null;
 };
+
+function readAttributes(attributes: unknown): { contactName: string | null; address: string | null } {
+  const value = (attributes ?? {}) as Record<string, unknown>;
+  return {
+    contactName: typeof value.contactName === "string" && value.contactName.trim() ? value.contactName : null,
+    address: typeof value.address === "string" && value.address.trim() ? value.address : null,
+  };
+}
 
 export async function getLeads(userId: string): Promise<LeadSummary[]> {
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
       id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
-      assignee_id: string | null; assignee_name: string | null; updated_at: string;
+      assignee_id: string | null; assignee_name: string | null; updated_at: string; attributes: unknown;
     }>(
       `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
-              a.display_name as assignee_name, l.updated_at
+              a.display_name as assignee_name, l.updated_at, l.attributes
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
        where l.workspace_id = $1
@@ -286,7 +301,7 @@ export async function getLeads(userId: string): Promise<LeadSummary[]> {
   return result.rows.map((row) => ({
     id: row.id, companyName: row.company_name, qualificationMetric: row.qualification_metric,
     pipelineStatus: row.pipeline_status, salesStage: row.sales_stage, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
-    updatedAt: toISO(row.updated_at),
+    updatedAt: toISO(row.updated_at), ...readAttributes(row.attributes),
   }));
 }
 
@@ -298,10 +313,10 @@ export async function getLeadDetail(userId: string, leadId: string): Promise<Lea
   return withTandemSession(pool, userId, async (client) => {
     const leadResult = await client.query<{
       id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
-      assignee_id: string | null; assignee_name: string | null; updated_at: string;
+      assignee_id: string | null; assignee_name: string | null; updated_at: string; attributes: unknown;
     }>(
       `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
-              a.display_name as assignee_name, l.updated_at
+              a.display_name as assignee_name, l.updated_at, l.attributes
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
        where l.id = $1 and l.workspace_id = $2`,
@@ -319,7 +334,7 @@ export async function getLeadDetail(userId: string, leadId: string): Promise<Lea
     return {
       id: lead.id, companyName: lead.company_name, qualificationMetric: lead.qualification_metric,
       pipelineStatus: lead.pipeline_status, salesStage: lead.sales_stage, assigneeId: lead.assignee_id, assigneeName: lead.assignee_name,
-      updatedAt: toISO(lead.updated_at),
+      updatedAt: toISO(lead.updated_at), ...readAttributes(lead.attributes),
       events: eventsResult.rows.map((r) => ({ id: r.id, type: r.event_type, payload: r.payload, occurredAt: toISO(r.occurred_at) })),
     };
   });
@@ -383,10 +398,10 @@ export async function getLeadsPage(userId: string, page: number, pageSize: numbe
   const result = await withTandemSession(pool, userId, (client) =>
     client.query<{
       id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
-      assignee_id: string | null; assignee_name: string | null; updated_at: string; total_count: string;
+      assignee_id: string | null; assignee_name: string | null; updated_at: string; total_count: string; attributes: unknown;
     }>(
       `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
-              a.display_name as assignee_name, l.updated_at, count(*) over () as total_count
+              a.display_name as assignee_name, l.updated_at, l.attributes, count(*) over () as total_count
        from tandem.leads l
        left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
        where l.workspace_id = $1
@@ -399,7 +414,7 @@ export async function getLeadsPage(userId: string, page: number, pageSize: numbe
     leads: result.rows.map((row) => ({
       id: row.id, companyName: row.company_name, qualificationMetric: row.qualification_metric,
       pipelineStatus: row.pipeline_status, salesStage: row.sales_stage, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
-      updatedAt: toISO(row.updated_at),
+      updatedAt: toISO(row.updated_at), ...readAttributes(row.attributes),
     })),
     total: result.rows.length > 0 ? Number(result.rows[0].total_count) : 0,
     page: safePage,

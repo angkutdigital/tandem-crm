@@ -21,7 +21,9 @@ import { createLead } from "@/lib/actions"
 
 const EMPTY_FORM = {
   companyName: "",
+  contactName: "",
   contactPhone: "",
+  address: "",
   qualificationMetric: "15",
   productTag: "",
 }
@@ -45,7 +47,9 @@ export function AddLeadDialog() {
     try {
       const leadId = await createLead({
         companyName: form.companyName,
+        contactName: form.contactName || undefined,
         contactPhone: form.contactPhone,
+        address: form.address || undefined,
         qualificationMetric: Number(form.qualificationMetric),
         productTag: form.productTag,
       })
@@ -81,12 +85,28 @@ export function AddLeadDialog() {
             />
           </div>
           <div className="flex flex-col gap-2">
+            <Label htmlFor="contactName">Person in charge (optional)</Label>
+            <Input
+              id="contactName"
+              value={form.contactName}
+              onChange={(e) => update("contactName", e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
             <Label htmlFor="contactPhone">Contact phone</Label>
             <Input
               id="contactPhone"
               value={form.contactPhone}
               onChange={(e) => update("contactPhone", e.target.value)}
               required
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="address">Address (optional)</Label>
+            <Input
+              id="address"
+              value={form.address}
+              onChange={(e) => update("address", e.target.value)}
             />
           </div>
           <div className="flex flex-col gap-2">
