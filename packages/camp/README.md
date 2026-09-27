@@ -58,19 +58,22 @@ singleton, not re-resolved per request.
 Migrated from `examples/dashboard` and live-verified against real
 Postgres:
 
-- **Overview** (`views/overview.tsx`) — stat tiles, pipeline breakdown,
-  agent roster. Simplified from the reference dashboard: the per-agent
-  "your own onboarding checklist" view (shown to a signed-in agent instead
-  of a manager) has not moved yet: this pass only migrated the
-  owner/admin ("manager") view.
+- **Overview** (`views/overview.tsx`, `components/onboarding-checklist.tsx`)
+  — stat tiles, pipeline breakdown, agent roster for a manager; an agent's
+  own onboarding checklist (toggle a step, certify themselves) instead,
+  matching the reference dashboard's role split.
 - **Leads** (`views/leads.tsx`, `views/lead-detail.tsx`,
   `components/new-lead-dialog.tsx`, `components/trail-activity.tsx`,
+  `components/leads-kanban-board.tsx`, `components/reui/kanban.tsx`,
   `components/ui/dialog.tsx`, `components/ui/textarea.tsx`) — the
-  paginated list (rows now link to detail), the "New lead" dialog
-  (including the PIC/address `attributes` fields), and the lead detail
-  page with full Trail activity: CHAMP qualification (log, correct,
-  retract), the event history, and the same sales-stage sync a trail
-  entry triggers on the lead itself. No kanban board yet.
+  paginated list and kanban board (rows/cards link to detail), the "New
+  lead" dialog (including the PIC/address `attributes` fields), and the
+  lead detail page with full Trail activity: CHAMP qualification (log,
+  correct, retract), the event history, and the same sales-stage sync a
+  trail entry triggers on the lead itself. The kanban board only allows
+  dropping into Won/Lost (the two transitions a drag alone has enough
+  information for -- see `actions.ts`'s `moveLeadStatus`), same rule the
+  dashboard's own board enforces.
 - **Payouts** (`views/payouts.tsx`, `actions.ts`) — including real
   mutations: Approve (`commission.approved`) and Pay (calls the configured
   `TandemPayoutAdapter`, then `commission.paid`). This is the screen that
@@ -99,12 +102,9 @@ Postgres:
   Postgres (added coverage, confirmed the row landed via SQL, confirmed
   the "Add coverage" control correctly disappeared once no territories
   were left to add).
-- **Overview** (`views/overview.tsx`, `components/onboarding-checklist.tsx`)
-  now also has the per-agent branch: an agent sees their own onboarding
-  checklist (toggle a step, certify themselves) instead of the manager's
-  roster view, matching examples/dashboard's own role split. Live-verified
-  by switching identity to a real agent, completing the remaining required
-  step, certifying, and confirming `certified_at` landed via SQL.
+  Overview's per-agent branch was live-verified by switching identity to
+  a real agent, completing their remaining required step, certifying, and
+  confirming `certified_at` landed via SQL.
 - **Earnings** (`views/earnings.tsx`, `components/earnings-chart.tsx`) —
   summary totals, a 6-month paid-commission chart, and the paid-payout
   list. Deliberately simpler than examples/dashboard's own
@@ -126,9 +126,19 @@ Postgres:
   a real auth provider). Live-verified: added a real territory and
   switched the routing strategy, both confirmed via SQL.
 
-**Not yet migrated** (still only in `examples/dashboard`): the Leads
-kanban board. Migrate and live-verify it the same way every screen above
-was done, not as an afterthought.
+**All planned screens are now migrated.** The Leads kanban board
+(`components/leads-kanban-board.tsx`, `components/reui/kanban.tsx`) was
+the last one: same drag-into-Won/Lost-only rule as the reference
+dashboard, live-verified against real Postgres including the same
+`flex!`-important-modifier overflow fix this session already shipped for
+the dashboard's own board (see CHANGELOG). One caught-but-not-fixed
+finding: a `DndDescribedBy-N` `aria-describedby` hydration mismatch shows
+up in dev on both this board and the original dashboard's -- confirmed
+identical on a fresh tab of the unmodified dashboard route, so it's a
+pre-existing `@dnd-kit`/SSR quirk in code that was copied verbatim, not a
+regression from this migration. Left as-is; worth a real fix later if it
+turns out to matter for production (dev-only overlay, not a production
+error boundary trip).
 
 **On delegating a migration to DeepSeek/aider:** three attempts across two
 screens have now failed. Agents: the first stalled asking a clarifying

@@ -87,8 +87,10 @@ export async function CampRootPage({
         const rawPage = Array.isArray(search.page) ? search.page[0] : search.page;
         const parsedPage = Number(rawPage);
         const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
+        const rawView = Array.isArray(search.view) ? search.view[0] : search.view;
+        const leadsView = rawView === "kanban" ? "kanban" : "list";
         const { LeadsView } = await import("./views/leads.js");
-        view = <LeadsView page={page} basePath={`${basePath}/leads`} />;
+        view = <LeadsView page={page} view={leadsView} basePath={`${basePath}/leads`} />;
       }
       break;
     }

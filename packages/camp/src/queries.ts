@@ -133,6 +133,33 @@ export type LeadSummary = {
   updatedAt: string;
 };
 
+/** Unpaginated lead list, for the kanban view: paging a board grouped by
+ * status would split a status column mid-page, which is worse than
+ * loading all of it (a real deployment with thousands of leads would
+ * want per-column paging instead, out of scope for this pass). */
+export async function getLeads(userId: string): Promise<LeadSummary[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
+      assignee_id: string | null; assignee_name: string | null; updated_at: string;
+    }>(
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
+              a.display_name as assignee_name, l.updated_at
+       from tandem.leads l
+       left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
+       where l.workspace_id = $1
+       order by l.updated_at desc`,
+      [workspaceId]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id, companyName: row.company_name, qualificationMetric: row.qualification_metric,
+    pipelineStatus: row.pipeline_status, salesStage: row.sales_stage, assigneeId: row.assignee_id, assigneeName: row.assignee_name,
+    updatedAt: toISO(row.updated_at),
+  }));
+}
+
 export type LeadsPage = { leads: LeadSummary[]; total: number; page: number; pageSize: number };
 
 /** Paginated lead list. */

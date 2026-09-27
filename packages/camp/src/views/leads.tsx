@@ -1,13 +1,15 @@
 import Link from "next/link";
 
+import { LeadsKanbanBoard } from "../components/leads-kanban-board.js";
 import { NewLeadDialog } from "../components/new-lead-dialog.js";
 import { Badge } from "../components/ui/badge.js";
+import { cn } from "cn";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
 import {
   Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious,
 } from "../components/ui/pagination.js";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.js";
-import { getLeadsPage, requireCurrentMember, type LeadSummary } from "../queries.js";
+import { getLeads, getLeadsPage, requireCurrentMember, type LeadSummary } from "../queries.js";
 
 const PAGE_SIZE = 10;
 const MAX_PAGE_LINKS = 5;
@@ -85,16 +87,29 @@ function LeadsPagination({ page, total, basePath }: { page: number; total: numbe
   );
 }
 
+function ViewToggle({ activeView, basePath }: { activeView: "list" | "kanban"; basePath: string }) {
+  const linkClass = (view: "list" | "kanban") =>
+    cn(
+      "rounded-md px-3 py-1 text-sm font-medium transition-colors",
+      activeView === view ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+    );
+  return (
+    <div className="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
+      <Link href={`${basePath}?view=list`} className={linkClass("list")}>List</Link>
+      <Link href={`${basePath}?view=kanban`} className={linkClass("kanban")}>Kanban</Link>
+    </div>
+  );
+}
+
 /**
- * Camp's Leads view. List-only plus "New lead" for this migrated slice (no
- * kanban board, no lead detail page yet) -- see packages/camp/README.md's
- * migration status for what's still outstanding. `basePath` is the URL
- * this view is mounted at, needed to build its own pagination links and
- * the new-lead redirect since Camp doesn't own routing (see root.tsx).
+ * Camp's Leads view: paginated list, kanban board (drag between the two
+ * status columns a drag actually has enough information for -- Won and
+ * Lost, see actions.ts's moveLeadStatus), and "New lead". `basePath` is
+ * the URL this view is mounted at, needed to build its own links since
+ * Camp doesn't own routing (see root.tsx).
  */
-export async function LeadsView({ page, basePath }: { page: number; basePath: string }) {
+export async function LeadsView({ page, view, basePath }: { page: number; view: "list" | "kanban"; basePath: string }) {
   const member = await requireCurrentMember();
-  const { leads, total, page: resolvedPage } = await getLeadsPage(member.userId, page, PAGE_SIZE);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
@@ -102,34 +117,48 @@ export async function LeadsView({ page, basePath }: { page: number; basePath: st
         <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
         <NewLeadDialog basePath={basePath} />
       </header>
-      <Card>
-        <CardHeader>
-          <CardTitle>All leads</CardTitle>
-          <CardDescription>{total === 0 ? "No leads yet" : `${total} lead${total === 1 ? "" : "s"}`}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {leads.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">No leads yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Sales stage</TableHead>
-                  <TableHead>Assignee</TableHead>
-                  <TableHead>Qualification metric</TableHead>
-                  <TableHead>Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {leads.map((lead) => <LeadRow key={lead.id} lead={lead} basePath={basePath} />)}
-              </TableBody>
-            </Table>
-          )}
-          <LeadsPagination page={resolvedPage} total={total} basePath={basePath} />
-        </CardContent>
-      </Card>
+
+      <div className="flex items-center justify-between gap-4">
+        <ViewToggle activeView={view} basePath={basePath} />
+      </div>
+
+      {view === "kanban" ? (
+        <LeadsKanbanBoard leads={await getLeads(member.userId)} basePath={basePath} />
+      ) : (
+        await (async () => {
+          const { leads, total, page: resolvedPage } = await getLeadsPage(member.userId, page, PAGE_SIZE);
+          return (
+            <Card>
+              <CardHeader>
+                <CardTitle>All leads</CardTitle>
+                <CardDescription>{total === 0 ? "No leads yet" : `${total} lead${total === 1 ? "" : "s"}`}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {leads.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No leads yet.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Company</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Sales stage</TableHead>
+                        <TableHead>Assignee</TableHead>
+                        <TableHead>Qualification metric</TableHead>
+                        <TableHead>Updated</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {leads.map((lead) => <LeadRow key={lead.id} lead={lead} basePath={basePath} />)}
+                    </TableBody>
+                  </Table>
+                )}
+                <LeadsPagination page={resolvedPage} total={total} basePath={basePath} />
+              </CardContent>
+            </Card>
+          );
+        })()
+      )}
     </div>
   );
 }

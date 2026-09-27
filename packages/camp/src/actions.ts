@@ -193,6 +193,36 @@ async function appendLeadEvent(
   revalidatePath("/tandem-camp/disputes");
 }
 
+export async function markLeadWon(leadId: string): Promise<void> {
+  await appendLeadEvent(leadId, "conversion.confirmed", {});
+}
+
+export async function markLeadLost(leadId: string, reason: string): Promise<void> {
+  if (!reason.trim()) throw new Error("a reason is required to mark a lead lost");
+  await appendLeadEvent(leadId, "lead.lost", { reason });
+}
+
+/** Called when a kanban card is dragged into a new column. Not every
+ * column pair is a real transition: Won -> Commission_Hold needs a
+ * partner/amount/release date, Commission_Hold -> Commission_Eligible
+ * needs the release date to have passed, and so on through the rest of
+ * the money pipeline -- none of that exists at the moment someone drags a
+ * card, so those columns are display-only destinations, not drop
+ * targets. Only the two transitions a drag actually has enough
+ * information for are allowed here; the UI must catch a thrown error
+ * from an unsupported drop and revert the card to its original column. */
+export async function moveLeadStatus(leadId: string, targetStatus: string): Promise<void> {
+  if (targetStatus === "Won") {
+    await markLeadWon(leadId);
+    return;
+  }
+  if (targetStatus === "Lost") {
+    await markLeadLost(leadId, "Moved to Lost on the kanban board");
+    return;
+  }
+  throw new Error(`"${targetStatus.replace(/_/g, " ")}" isn't a status you can drag a lead into -- it needs data a drag can't supply.`);
+}
+
 export async function approveCommission(leadId: string, payoutId: string): Promise<void> {
   await appendLeadEvent(leadId, "commission.approved", { payoutId });
 }
