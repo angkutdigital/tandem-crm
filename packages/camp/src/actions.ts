@@ -2,10 +2,96 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { replayLeadEvents, replayAgentOnboardingEvents, type TandemEvent, type AgentOnboardingEvent } from "tandem-crm";
+import { replayLeadEvents, replayAgentOnboardingEvents, qualifyLead, defaultTandemConfig, type TandemEvent, type AgentOnboardingEvent } from "tandem-crm";
 import { withTandemSession } from "tandem-crm/db";
 import { getTandemCampConfig } from "./config.js";
 import { requireCurrentMember, getOnboardingSteps } from "./queries.js";
+
+/** Mirrors examples/dashboard's createLead: qualification is computed and
+ * snapshotted onto lead.created the same way any adapter would, and PIC
+ * (contactName) / address are optional, stored in tandem.leads.attributes
+ * (a jsonb column the schema reserves for host-defined lead fields) rather
+ * than their own columns. */
+export async function createLead(input: {
+  companyName: string;
+  contactPhone: string;
+  qualificationMetric: number;
+  productTag: string;
+  contactName?: string;
+  address?: string;
+}): Promise<string> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  if (!input.companyName.trim()) throw new Error("company name is required");
+  if (!input.contactPhone.trim()) throw new Error("contact phone is required");
+  if (!input.productTag.trim()) throw new Error("product tag is required");
+
+  const leadId = randomUUID();
+  const qualification = qualifyLead({ qualificationMetric: input.qualificationMetric }, defaultTandemConfig);
+  const newEvent = {
+    id: randomUUID(), sequence: 1, workspaceId, leadId,
+    source: "camp", sourceEventId: `camp-${randomUUID()}`, occurredAt: new Date().toISOString(),
+    type: "lead.created",
+    data: {
+      companyName: input.companyName.trim(), qualificationMetric: input.qualificationMetric,
+      qualification: qualification.status,
+    },
+  } as TandemEvent;
+
+  const state = replayLeadEvents([newEvent], workspaceId, leadId);
+  if (!state) throw new Error("lead has no state after creation");
+
+  const attributes: Record<string, string> = {};
+  if (input.contactName?.trim()) attributes.contactName = input.contactName.trim();
+  if (input.address?.trim()) attributes.address = input.address.trim();
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    await client.query(
+      `insert into tandem.events
+         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
+      [newEvent.id, workspaceId, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+    );
+    await client.query(
+      `insert into tandem.leads (id, workspace_id, company_name, contact_phone, qualification_metric, product_tag, attributes, pipeline_status, last_event_sequence)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [leadId, workspaceId, state.companyName, input.contactPhone.trim(), state.qualificationMetric, input.productTag.trim(), JSON.stringify(attributes), state.status, state.lastSequence]
+    );
+  });
+  revalidatePath("/leads");
+  revalidatePath("/");
+  return leadId;
+}
+
+/** Mirrors examples/dashboard's createAgentProfile. Only creates the
+ * operational profile row -- linking a real sign-in account is a separate
+ * step through the host's own auth provider, same convention as the
+ * dashboard's own Add agent dialog. */
+export async function createAgentProfile(input: {
+  displayName: string;
+  externalRef?: string;
+}): Promise<string> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can add an agent profile");
+  }
+  const displayName = input.displayName.trim();
+  const externalRef = input.externalRef?.trim() || null;
+  if (!displayName) throw new Error("agent name is required");
+
+  const agentId = randomUUID();
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.agents (id, workspace_id, display_name, external_ref)
+       values ($1, $2, $3, $4)`,
+      [agentId, workspaceId, displayName, externalRef]
+    )
+  );
+  revalidatePath("/");
+  revalidatePath("/agents");
+  return agentId;
+}
 
 async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): Promise<TandemEvent[]> {
   const { workspaceId } = getTandemCampConfig();

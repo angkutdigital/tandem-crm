@@ -1,3 +1,4 @@
+import { NewLeadDialog } from "../components/new-lead-dialog.js";
 import { Badge } from "../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
 import {
@@ -81,11 +82,11 @@ function LeadsPagination({ page, total, basePath }: { page: number; total: numbe
 }
 
 /**
- * Camp's Leads view. Deliberately list-only for this first migrated slice
- * (no kanban board, no lead detail page, no "New lead" dialog) -- see
- * packages/camp/README.md's migration status for what's still outstanding.
- * `basePath` is the URL this view is mounted at, needed to build its own
- * pagination links since Camp doesn't own routing (see root.tsx).
+ * Camp's Leads view. List-only plus "New lead" for this migrated slice (no
+ * kanban board, no lead detail page yet) -- see packages/camp/README.md's
+ * migration status for what's still outstanding. `basePath` is the URL
+ * this view is mounted at, needed to build its own pagination links and
+ * the new-lead redirect since Camp doesn't own routing (see root.tsx).
  */
 export async function LeadsView({ page, basePath }: { page: number; basePath: string }) {
   const member = await requireCurrentMember();
@@ -93,8 +94,9 @@ export async function LeadsView({ page, basePath }: { page: number; basePath: st
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
-      <header className="flex flex-col gap-1.5">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
+        <NewLeadDialog />
       </header>
       <Card>
         <CardHeader>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AddAgentDialog } from "../components/add-agent-dialog.js";
 import { Badge } from "../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.js";
@@ -13,12 +14,11 @@ function statusFor(agent: AgentSummary) {
 }
 
 /**
- * Camp's Agents view. Roster (read-only) only for this pass -- agent
- * creation ("Add agent") isn't migrated, since it needs Dialog/Input UI
- * primitives this package doesn't have yet. The per-agent "you are an
- * agent, here is your own roster redirect" branch the reference dashboard
- * has also isn't ported: Camp's Overview is manager-only today (see
- * views/overview.tsx), so this view is too, for the same reason.
+ * Camp's Agents view. Roster plus "Add agent" for this pass. The per-agent
+ * "you are an agent, here is your own roster redirect" branch the
+ * reference dashboard has isn't ported: Camp's Overview is manager-only
+ * today (see views/overview.tsx), so this view is too, for the same
+ * reason.
  */
 export async function AgentsView({ basePath }: { basePath: string }) {
   const member = await requireCurrentMember();
@@ -26,9 +26,12 @@ export async function AgentsView({ basePath }: { basePath: string }) {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
-      <header className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
-        <p className="text-sm text-muted-foreground">Onboarding status, lead workload, and certification across this workspace.</p>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
+          <p className="text-sm text-muted-foreground">Onboarding status, lead workload, and certification across this workspace.</p>
+        </div>
+        <AddAgentDialog basePath={basePath} />
       </header>
 
       <Card>
