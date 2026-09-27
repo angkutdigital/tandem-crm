@@ -2,7 +2,11 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { replayLeadEvents, replayAgentOnboardingEvents, qualifyLead, defaultTandemConfig, type TandemEvent, type AgentOnboardingEvent } from "tandem-crm";
+import {
+  replayLeadEvents, replayAgentOnboardingEvents, replayTrailEntryEvents,
+  qualifyLead, defaultTandemConfig, trailVisitChannels, trailSalesStages,
+  type TandemEvent, type AgentOnboardingEvent, type TrailEvent, type TrailVisitChannel, type TrailSalesStage,
+} from "tandem-crm";
 import { withTandemSession } from "tandem-crm/db";
 import { getTandemCampConfig } from "./config.js";
 import { requireCurrentMember, getOnboardingSteps } from "./queries.js";
@@ -58,8 +62,8 @@ export async function createLead(input: {
       [leadId, workspaceId, state.companyName, input.contactPhone.trim(), state.qualificationMetric, input.productTag.trim(), JSON.stringify(attributes), state.status, state.lastSequence]
     );
   });
-  revalidatePath("/leads");
-  revalidatePath("/");
+  revalidatePath("/tandem-camp/leads");
+  revalidatePath("/tandem-camp");
   return leadId;
 }
 
@@ -88,8 +92,8 @@ export async function createAgentProfile(input: {
       [agentId, workspaceId, displayName, externalRef]
     )
   );
-  revalidatePath("/");
-  revalidatePath("/agents");
+  revalidatePath("/tandem-camp");
+  revalidatePath("/tandem-camp/agents");
   return agentId;
 }
 
@@ -447,4 +451,167 @@ export async function assignAgentToTerritory(agentId: string, territoryId: strin
     )
   );
   revalidatePath("/tandem-camp/agents");
+}
+
+/** Keeps the lead's own promoted sales stage (queryable, drives the funnel
+ * view) in sync with whatever an agent just logged in Trail, in the same
+ * transaction as the trail write -- mirrors examples/dashboard's own
+ * syncLeadSalesStage. A no-op append is skipped rather than growing the
+ * Core event log with an event that changes nothing. Takes an
+ * already-open client (unlike the top-of-file appendLeadEvent, which
+ * opens its own session) so this can share one transaction with the
+ * trail_events/trail_entries write it always accompanies. */
+async function syncLeadSalesStage(client: import("pg").PoolClient, leadId: string, salesStage: TrailSalesStage): Promise<void> {
+  const { workspaceId } = getTandemCampConfig();
+  const leadEvents = await loadLeadEvents(client, leadId);
+  const leadState = replayLeadEvents(leadEvents, workspaceId, leadId);
+  if (!leadState || leadState.salesStage === salesStage) return;
+
+  const nextSequence = leadEvents.length > 0 ? leadEvents[leadEvents.length - 1].sequence + 1 : 1;
+  const newEvent = {
+    id: randomUUID(), sequence: nextSequence, workspaceId, leadId,
+    source: "camp", sourceEventId: `camp-${randomUUID()}`, occurredAt: new Date().toISOString(),
+    type: "lead.stage_changed", data: { salesStage },
+  } as TandemEvent;
+  const state = replayLeadEvents([...leadEvents, newEvent], workspaceId, leadId);
+  if (!state) throw new Error("lead has no state after stage sync");
+
+  await client.query(
+    `insert into tandem.events
+       (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+     values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
+    [newEvent.id, workspaceId, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+  );
+  await client.query(
+    `update tandem.leads set sales_stage = $2, last_event_sequence = $3, updated_at = now() where id = $1 and workspace_id = $4`,
+    [leadId, state.salesStage, state.lastSequence, workspaceId]
+  );
+}
+
+export type TrailInput = {
+  channel: TrailVisitChannel;
+  confidenceRating: number;
+  salesStage: TrailSalesStage;
+  note?: string;
+  challenges?: string;
+  authority?: string;
+  budget?: string;
+  prioritization?: string;
+};
+
+/** Mirrors src/trail.ts's own validateFields and examples/dashboard's
+ * validateTrailInput exactly -- a clearer, earlier error for Camp's form,
+ * not a stricter rule than the domain reducer already enforces. CHAMP
+ * fields stay optional here too, for the same backward-compatibility
+ * reason: the reducer itself can never require them (see trail.ts), so
+ * this action-layer check can't either without lying about what the
+ * domain layer actually accepts. */
+function validateTrailInput(input: TrailInput): void {
+  if (!trailVisitChannels.includes(input.channel)) throw new Error("invalid channel");
+  if (!trailSalesStages.includes(input.salesStage)) throw new Error("invalid sales stage");
+  if (!Number.isSafeInteger(input.confidenceRating) || input.confidenceRating < 1 || input.confidenceRating > 10) {
+    throw new Error("confidence rating must be an integer from 1 to 10");
+  }
+  const hasContent = [input.note, input.challenges, input.authority, input.budget, input.prioritization]
+    .some((field) => field?.trim());
+  if (!hasContent) throw new Error("at least one of note, challenges, authority, budget, or prioritization is required");
+}
+
+export async function logTrailVisit(leadId: string, input: TrailInput): Promise<void> {
+  validateTrailInput(input);
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  const entryId = randomUUID();
+  const newEvent = {
+    id: randomUUID(), sequence: 1, workspaceId, leadId, entryId,
+    source: "camp", sourceEventId: `camp-${randomUUID()}`, occurredAt: new Date().toISOString(),
+    type: "trail.visit_logged", data: input,
+  } as TrailEvent;
+  const state = replayTrailEntryEvents([newEvent], workspaceId, leadId, entryId);
+  if (!state) throw new Error("trail entry has no state after logging");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    await client.query(
+      `insert into tandem.trail_events
+         (id, workspace_id, lead_id, entry_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [newEvent.id, workspaceId, leadId, entryId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+    );
+    await client.query(
+      `insert into tandem.trail_entries
+         (id, workspace_id, lead_id, channel, confidence_rating, sales_stage, note, challenges, authority, budget, prioritization, logged_at, last_event_sequence)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [entryId, workspaceId, leadId, state.channel, state.confidenceRating, state.salesStage, state.note,
+        state.challenges, state.authority, state.budget, state.prioritization, state.loggedAt, state.lastSequence]
+    );
+    await syncLeadSalesStage(client, leadId, state.salesStage);
+  });
+  revalidatePath(`/tandem-camp/leads/${leadId}`);
+}
+
+async function loadTrailEvents(client: import("pg").PoolClient, leadId: string, entryId: string): Promise<TrailEvent[]> {
+  const { workspaceId } = getTandemCampConfig();
+  const result = await client.query<{
+    id: string; sequence: number; event_type: string; payload: Record<string, unknown>; occurred_at: string;
+    source: string; source_event_id: string;
+  }>(
+    `select id, sequence, event_type, payload, occurred_at, source, source_event_id
+     from tandem.trail_events where lead_id = $1 and entry_id = $2 and workspace_id = $3 order by sequence`,
+    [leadId, entryId, workspaceId]
+  );
+  return result.rows.map((row) => ({
+    id: row.id, sequence: Number(row.sequence), workspaceId, leadId, entryId,
+    source: row.source, sourceEventId: row.source_event_id,
+    occurredAt: new Date(row.occurred_at).toISOString(), type: row.event_type, data: row.payload,
+  })) as TrailEvent[];
+}
+
+async function appendTrailEvent(
+  leadId: string,
+  entryId: string,
+  type: TrailEvent["type"],
+  data: TrailEvent["data"]
+): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  await withTandemSession(pool, member.userId, async (client) => {
+    const existing = await loadTrailEvents(client, leadId, entryId);
+    if (existing.length === 0) throw new Error("trail entry not found");
+    const nextSequence = existing[existing.length - 1].sequence + 1;
+    const newEvent = {
+      id: randomUUID(), sequence: nextSequence, workspaceId, leadId, entryId,
+      source: "camp", sourceEventId: `camp-${randomUUID()}`, occurredAt: new Date().toISOString(),
+      type, data,
+    } as TrailEvent;
+    const state = replayTrailEntryEvents([...existing, newEvent], workspaceId, leadId, entryId);
+    if (!state) throw new Error("trail entry has no state after append");
+
+    await client.query(
+      `insert into tandem.trail_events
+         (id, workspace_id, lead_id, entry_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [newEvent.id, workspaceId, leadId, entryId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+    );
+    await client.query(
+      `update tandem.trail_entries
+       set channel = $2, confidence_rating = $3, sales_stage = $4, note = $5,
+           challenges = $6, authority = $7, budget = $8, prioritization = $9,
+           corrected_at = $10, retracted = $11, last_event_sequence = $12, updated_at = now()
+       where id = $1 and workspace_id = $13 and lead_id = $14`,
+      [entryId, state.channel, state.confidenceRating, state.salesStage, state.note,
+        state.challenges, state.authority, state.budget, state.prioritization,
+        state.correctedAt, state.retracted, state.lastSequence, workspaceId, leadId]
+    );
+    if (!state.retracted) await syncLeadSalesStage(client, leadId, state.salesStage);
+  });
+  revalidatePath(`/tandem-camp/leads/${leadId}`);
+}
+
+export async function correctTrailEntry(leadId: string, entryId: string, input: TrailInput): Promise<void> {
+  validateTrailInput(input);
+  await appendTrailEvent(leadId, entryId, "trail.entry_corrected", input);
+}
+
+export async function retractTrailEntry(leadId: string, entryId: string): Promise<void> {
+  await appendTrailEvent(leadId, entryId, "trail.entry_retracted", {});
 }

@@ -76,12 +76,17 @@ export async function CampRootPage({
       break;
     }
     case "leads": {
-      if (rest.length > 0) notFound(); // lead detail isn't migrated yet
-      const rawPage = Array.isArray(search.page) ? search.page[0] : search.page;
-      const parsedPage = Number(rawPage);
-      const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
-      const { LeadsView } = await import("./views/leads.js");
-      view = <LeadsView page={page} basePath={`${basePath}/leads`} />;
+      if (rest.length > 1) notFound();
+      if (rest.length === 1) {
+        const { LeadDetailView } = await import("./views/lead-detail.js");
+        view = <LeadDetailView leadId={rest[0]} basePath={`${basePath}/leads`} />;
+      } else {
+        const rawPage = Array.isArray(search.page) ? search.page[0] : search.page;
+        const parsedPage = Number(rawPage);
+        const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
+        const { LeadsView } = await import("./views/leads.js");
+        view = <LeadsView page={page} basePath={`${basePath}/leads`} />;
+      }
       break;
     }
     case "agents": {

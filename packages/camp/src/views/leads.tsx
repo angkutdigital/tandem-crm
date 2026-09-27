@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { NewLeadDialog } from "../components/new-lead-dialog.js";
 import { Badge } from "../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
@@ -29,10 +31,12 @@ const salesStageVariantMap: Record<string, "default" | "secondary" | "outline" |
   Negotiating: "secondary", Closed_Won: "default", Closed_Lost: "destructive",
 };
 
-function LeadRow({ lead }: { lead: LeadSummary }) {
+function LeadRow({ lead, basePath }: { lead: LeadSummary; basePath: string }) {
   return (
     <TableRow>
-      <TableCell className="font-medium">{lead.companyName}</TableCell>
+      <TableCell className="font-medium">
+        <Link href={`${basePath}/${lead.id}`} className="hover:underline">{lead.companyName}</Link>
+      </TableCell>
       <TableCell>
         <Badge variant={statusVariantMap[lead.pipelineStatus] ?? "outline"}>{humanizeStatus(lead.pipelineStatus)}</Badge>
       </TableCell>
@@ -96,7 +100,7 @@ export async function LeadsView({ page, basePath }: { page: number; basePath: st
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-        <NewLeadDialog />
+        <NewLeadDialog basePath={basePath} />
       </header>
       <Card>
         <CardHeader>
@@ -119,7 +123,7 @@ export async function LeadsView({ page, basePath }: { page: number; basePath: st
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {leads.map((lead) => <LeadRow key={lead.id} lead={lead} />)}
+                {leads.map((lead) => <LeadRow key={lead.id} lead={lead} basePath={basePath} />)}
               </TableBody>
             </Table>
           )}

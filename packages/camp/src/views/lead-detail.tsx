@@ -1,0 +1,147 @@
+import Link from "next/link";
+
+import { TrailActivity } from "../components/trail-activity.js";
+import { Badge } from "../components/ui/badge.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
+import { getLeadDetail, getTrailEntries, requireCurrentMember } from "../queries.js";
+
+function humanizeStatus(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+const statusVariantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  Automated_Setup: "outline", Manual_Review: "outline", Won: "secondary",
+  Commission_Hold: "secondary", Commission_Eligible: "secondary", Commission_Paid: "default",
+  Lost: "destructive", Refunded: "destructive",
+};
+
+const salesStageVariantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  New: "outline", Contacted: "outline", Qualified: "secondary",
+  Negotiating: "secondary", Closed_Won: "default", Closed_Lost: "destructive",
+};
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+/**
+ * Camp's Lead detail view -- brings Trail (CHAMP qualification, activity
+ * history) and the raw event log into the installable package for the
+ * first time. `basePath` is the Leads list's mount path (e.g.
+ * ".../leads"), used for the "Back to leads" link since Camp doesn't own
+ * routing (see root.tsx).
+ */
+export async function LeadDetailView({ leadId, basePath }: { leadId: string; basePath: string }) {
+  const member = await requireCurrentMember();
+  const [lead, trailEntries] = await Promise.all([
+    getLeadDetail(member.userId, leadId),
+    getTrailEntries(member.userId, leadId),
+  ]);
+
+  if (!lead) {
+    return (
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">Lead not found.</CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
+      <header className="flex flex-col gap-1.5">
+        <Link href={basePath} className="text-sm text-muted-foreground hover:text-foreground">
+          &larr; Back to leads
+        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">{lead.companyName}</h1>
+          <Badge variant={statusVariantMap[lead.pipelineStatus] ?? "outline"}>{humanizeStatus(lead.pipelineStatus)}</Badge>
+          <Badge variant={salesStageVariantMap[lead.salesStage] ?? "outline"}>{humanizeStatus(lead.salesStage)}</Badge>
+        </div>
+        <p className="text-sm text-muted-foreground">Last updated {formatDate(lead.updatedAt)}</p>
+      </header>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        {lead.contactName && (
+          <Card>
+            <CardHeader>
+              <CardDescription className="text-xs font-medium tracking-wide uppercase">Person in charge</CardDescription>
+              <CardTitle className="text-lg font-semibold">{lead.contactName}</CardTitle>
+            </CardHeader>
+          </Card>
+        )}
+        {lead.address && (
+          <Card>
+            <CardHeader>
+              <CardDescription className="text-xs font-medium tracking-wide uppercase">Address</CardDescription>
+              <CardTitle className="text-lg font-semibold">{lead.address}</CardTitle>
+            </CardHeader>
+          </Card>
+        )}
+        <Card>
+          <CardHeader>
+            <CardDescription className="text-xs font-medium tracking-wide uppercase">Assignee</CardDescription>
+            <CardTitle className="text-lg font-semibold">{lead.assigneeName ?? "Unassigned"}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="text-xs font-medium tracking-wide uppercase">Qualification metric</CardDescription>
+            <CardTitle className="text-lg font-semibold tabular-nums">{lead.qualificationMetric}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="text-xs font-medium tracking-wide uppercase">Status</CardDescription>
+            <CardTitle className="text-lg font-semibold">{humanizeStatus(lead.pipelineStatus)}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription className="text-xs font-medium tracking-wide uppercase">Sales stage</CardDescription>
+            <CardTitle className="text-lg font-semibold">{humanizeStatus(lead.salesStage)}</CardTitle>
+          </CardHeader>
+        </Card>
+      </section>
+
+      <Card>
+        <CardContent className="pt-(--card-spacing)">
+          <TrailActivity leadId={lead.id} entries={trailEntries} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Event history</CardTitle>
+          <CardDescription>Every business event recorded for this lead, in append order.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {lead.events.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No events recorded yet.</p>
+          ) : (
+            <ol className="flex flex-col gap-4">
+              {lead.events.map((event) => (
+                <li key={event.id} className="flex flex-col gap-1.5 border-l-2 pl-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{event.type}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(event.occurredAt)}</span>
+                  </div>
+                  {Object.keys(event.payload).length > 0 && (
+                    <pre className="overflow-x-auto rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
+                      {JSON.stringify(event.payload, null, 2)}
+                    </pre>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

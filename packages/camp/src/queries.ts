@@ -406,3 +406,90 @@ export async function getAgentDetail(userId: string, agentId: string): Promise<A
     };
   });
 }
+
+/** PIC (contactName) and address live in tandem.leads.attributes -- a
+ * jsonb column the schema reserves for host-defined lead fields ("Dynamic
+ * lead data is JSON, never columns invented per source") -- not their own
+ * columns. Mirrors examples/dashboard's own readAttributes. */
+function readAttributes(attributes: unknown): { contactName: string | null; address: string | null } {
+  const value = (attributes ?? {}) as Record<string, unknown>;
+  return {
+    contactName: typeof value.contactName === "string" && value.contactName.trim() ? value.contactName : null,
+    address: typeof value.address === "string" && value.address.trim() ? value.address : null,
+  };
+}
+
+export type LeadDetail = LeadSummary & {
+  contactName: string | null;
+  address: string | null;
+  events: Array<{ id: string; type: string; payload: Record<string, unknown>; occurredAt: string }>;
+};
+
+export async function getLeadDetail(userId: string, leadId: string): Promise<LeadDetail | null> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  return withTandemSession(pool, userId, async (client) => {
+    const leadResult = await client.query<{
+      id: string; company_name: string; qualification_metric: number; pipeline_status: string; sales_stage: string;
+      assignee_id: string | null; assignee_name: string | null; updated_at: string; attributes: unknown;
+    }>(
+      `select l.id, l.company_name, l.qualification_metric, l.pipeline_status, l.sales_stage, l.assignee_id,
+              a.display_name as assignee_name, l.updated_at, l.attributes
+       from tandem.leads l
+       left join tandem.agents a on a.id = l.assignee_id and a.workspace_id = l.workspace_id
+       where l.id = $1 and l.workspace_id = $2`,
+      [leadId, workspaceId]
+    );
+    const lead = leadResult.rows[0];
+    if (!lead) return null;
+
+    const eventsResult = await client.query<{ id: string; event_type: string; payload: Record<string, unknown>; occurred_at: string }>(
+      `select id, event_type, payload, occurred_at from tandem.events
+       where lead_id = $1 and workspace_id = $2 order by sequence`,
+      [leadId, workspaceId]
+    );
+
+    return {
+      id: lead.id, companyName: lead.company_name, qualificationMetric: lead.qualification_metric,
+      pipelineStatus: lead.pipeline_status, salesStage: lead.sales_stage, assigneeId: lead.assignee_id, assigneeName: lead.assignee_name,
+      updatedAt: toISO(lead.updated_at), ...readAttributes(lead.attributes),
+      events: eventsResult.rows.map((r) => ({ id: r.id, type: r.event_type, payload: r.payload, occurredAt: toISO(r.occurred_at) })),
+    };
+  });
+}
+
+export type TrailEntrySummary = {
+  id: string;
+  channel: "phone" | "physical" | "email" | "whatsapp";
+  confidenceRating: number;
+  salesStage: "New" | "Contacted" | "Qualified" | "Negotiating" | "Closed_Won" | "Closed_Lost";
+  note: string | null;
+  challenges: string | null;
+  authority: string | null;
+  budget: string | null;
+  prioritization: string | null;
+  loggedAt: string;
+  correctedAt: string | null;
+  retracted: boolean;
+};
+
+export async function getTrailEntries(userId: string, leadId: string): Promise<TrailEntrySummary[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; channel: TrailEntrySummary["channel"]; confidence_rating: number;
+      sales_stage: TrailEntrySummary["salesStage"]; note: string | null;
+      challenges: string | null; authority: string | null; budget: string | null; prioritization: string | null;
+      logged_at: string; corrected_at: string | null; retracted: boolean;
+    }>(
+      `select id, channel, confidence_rating, sales_stage, note, challenges, authority, budget, prioritization,
+              logged_at, corrected_at, retracted
+       from tandem.trail_entries where lead_id = $1 and workspace_id = $2 order by logged_at asc`,
+      [leadId, workspaceId]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id, channel: row.channel, confidenceRating: row.confidence_rating, salesStage: row.sales_stage,
+    note: row.note, challenges: row.challenges, authority: row.authority, budget: row.budget, prioritization: row.prioritization,
+    loggedAt: toISO(row.logged_at), correctedAt: toISO(row.corrected_at), retracted: row.retracted,
+  }));
+}

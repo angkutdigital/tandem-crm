@@ -28,11 +28,7 @@ const EMPTY_FORM = {
   productTag: "",
 }
 
-/** No basePath/redirect prop: Camp has no lead detail route yet (root.tsx's
- * leads case 404s past the list), so a created lead just refreshes the
- * list it was created from instead of navigating to a detail page that
- * doesn't exist. Revisit once lead detail is migrated. */
-export function NewLeadDialog() {
+export function NewLeadDialog({ basePath }: { basePath: string }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -49,7 +45,7 @@ export function NewLeadDialog() {
     event.preventDefault()
     setPending(true)
     try {
-      await createLead({
+      const leadId = await createLead({
         companyName: form.companyName,
         contactName: form.contactName || undefined,
         contactPhone: form.contactPhone,
@@ -59,8 +55,7 @@ export function NewLeadDialog() {
       })
       setOpen(false)
       setForm(EMPTY_FORM)
-      toast.success("Lead created")
-      router.refresh()
+      router.push(`${basePath}/${leadId}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not create lead")
     } finally {
