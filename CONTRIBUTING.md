@@ -1,6 +1,6 @@
 # Contributing
 
-tandem-crm is an early-stage, solo-maintained project. The repository has just opened its first PR and the package is not yet published to npm. Response times may be slow. There is no CLA and no formal governance; keep the process light.
+tandem-crm is an early-stage, solo-maintained project. Response times may be slow. There is no CLA and no formal governance; keep the process light.
 
 ## Development setup
 
@@ -14,6 +14,8 @@ Toolchain:
 - Vitest for tests
 - `tsc` for typecheck and build
 - no separate linter configured yet
+
+`examples/dashboard` and `packages/camp` are built on `@base-ui/react`, not Radix, even though the components follow shadcn/ui's file layout and naming. The API differs in a few places that will silently do the wrong thing if you assume Radix: use `render={<Link href="/" />}` instead of `asChild`, and `DropdownMenuItem` fires `onClick`, not `onSelect`.
 
 ## Checks before opening a PR
 
