@@ -1,11 +1,15 @@
-import { BadgeCheck, Trophy, Users, Wallet, type LucideIcon } from "lucide-react";
+import { BadgeCheck, ListChecks, Trophy, Users, Wallet, type LucideIcon } from "lucide-react";
+import Link from "next/link";
 
+import { OnboardingChecklist } from "../components/onboarding-checklist.js";
 import { Avatar, AvatarFallback } from "../components/ui/avatar.js";
 import { Badge } from "../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
 import { Progress } from "../components/ui/progress.js";
 import {
+  getAgentDetail,
   getAgentSummaries,
+  getOnboardingSteps,
   getPendingPayoutsSummary,
   getPipelineCounts,
   isAgentCurrentlyCertified,
@@ -59,27 +63,43 @@ function AgentStatusBadge({ agent }: { agent: AgentSummary }) {
 }
 
 /**
- * Camp's Overview view. Deliberately a simplified subset of
- * examples/dashboard's app/page.tsx for this first migrated slice: shows
- * the manager view (stat tiles, pipeline breakdown, agent roster) only.
- * The reference dashboard's per-agent "your own onboarding checklist"
- * branch is not yet ported -- see packages/camp/README.md's migration
- * status for what's still outstanding.
+ * Camp's Overview view. Manager view (stat tiles, pipeline breakdown,
+ * agent roster) and the per-agent "your own onboarding checklist" view,
+ * mirroring examples/dashboard's app/page.tsx role branching: RLS already
+ * scopes leads/payouts to "my own" for an agent vs. the whole workspace
+ * for owner/admin, but the workspace-wide agent roster only exposes an
+ * agent's OWN onboarding_status row, so a non-manager gets their own
+ * checklist instead of co-workers' certification state.
  */
-export async function OverviewView() {
+export async function OverviewView({ basePath }: { basePath: string }) {
   const member = await requireCurrentMember();
+  const isManager = member.role === "owner" || member.role === "admin";
 
-  const [counts, payouts, agents] = await Promise.all([
+  const [counts, payouts, agents, myOnboarding] = await Promise.all([
     getPipelineCounts(member.userId),
     getPendingPayoutsSummary(member.userId),
-    getAgentSummaries(member.userId),
+    isManager ? getAgentSummaries(member.userId) : Promise.resolve(null),
+    !isManager
+      ? Promise.all([
+          getOnboardingSteps(member.userId),
+          member.agentId ? getAgentDetail(member.userId, member.agentId) : null,
+        ])
+      : Promise.resolve(null),
   ]);
 
   const openLeads = Object.entries(counts)
     .filter(([status]) => !CLOSED_STATUSES.has(status))
     .reduce((total, [, count]) => total + count, 0);
   const wonThisCycle = WON_STATUSES.reduce((total, status) => total + (counts[status] ?? 0), 0);
-  const certifiedAgents = agents.filter(isAgentCurrentlyCertified).length;
+  const certifiedAgents = agents?.filter(isAgentCurrentlyCertified).length ?? 0;
+  const [onboardingSteps, myAgentDetail] = myOnboarding ?? [[], null];
+  const myRequiredSteps = onboardingSteps.filter((step) => step.required);
+  const myCompletedRequired = myAgentDetail
+    ? myRequiredSteps.filter((step) => myAgentDetail.completedStepCodes.includes(step.code)).length
+    : 0;
+  const myCertificationCurrent = myAgentDetail !== null
+    && myAgentDetail.certifiedAt !== null
+    && myCompletedRequired === myRequiredSteps.length;
   const peakPipelineCount = Math.max(1, ...PIPELINE_STATUSES.map((status) => counts[status] ?? 0));
 
   const payoutValue = payouts.currency ? formatCurrency(payouts.totalMinor, payouts.currency) : String(payouts.count);
@@ -95,7 +115,16 @@ export async function OverviewView() {
         <StatTile icon={Users} label="Open leads" value={openLeads.toLocaleString()} hint="Excludes paid, lost, and refunded" />
         <StatTile icon={Trophy} label="Won this cycle" value={wonThisCycle.toLocaleString()} hint="Won, in hold, or commission-eligible" />
         <StatTile icon={Wallet} label="Pending payouts" value={payoutValue} hint={payoutHint} />
-        <StatTile icon={BadgeCheck} label="Certified agents" value={`${certifiedAgents} / ${agents.length}`} hint="Completed every required onboarding step" />
+        {isManager ? (
+          <StatTile icon={BadgeCheck} label="Certified agents" value={`${certifiedAgents} / ${agents?.length ?? 0}`} hint="Completed every required onboarding step" />
+        ) : (
+          <StatTile
+            icon={ListChecks}
+            label="Your onboarding"
+            value={myCertificationCurrent ? "Certified" : `${myCompletedRequired} / ${myRequiredSteps.length}`}
+            hint={myCertificationCurrent ? "All required steps complete" : "Required steps completed"}
+          />
+        )}
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -120,36 +149,63 @@ export async function OverviewView() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Agents</CardTitle>
-            <CardDescription>Onboarding progress and current workload.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-1">
-            {agents.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">No agents in this workspace yet.</p>
-            ) : (
-              agents.map((agent) => {
-                const stepLabel = agent.requiredStepCount > 0 ? `${agent.completedStepCount}/${agent.requiredStepCount} steps` : null;
-                const meta = [`${agent.openLeadCount} open lead${agent.openLeadCount === 1 ? "" : "s"}`, stepLabel].filter(Boolean).join(" · ");
-                return (
-                  <div key={agent.id} className="-mx-2 flex items-center justify-between gap-4 rounded-md px-2 py-2">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar className="size-8">
-                        <AvatarFallback className="text-xs font-medium">{initialsOf(agent.displayName) || "?"}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{agent.displayName}</p>
-                        <p className="truncate text-xs text-muted-foreground">{meta}</p>
+        {isManager ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Agents</CardTitle>
+              <CardDescription>Onboarding progress and current workload.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-1">
+              {!agents || agents.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">No agents in this workspace yet.</p>
+              ) : (
+                agents.map((agent) => {
+                  const stepLabel = agent.requiredStepCount > 0 ? `${agent.completedStepCount}/${agent.requiredStepCount} steps` : null;
+                  const meta = [`${agent.openLeadCount} open lead${agent.openLeadCount === 1 ? "" : "s"}`, stepLabel].filter(Boolean).join(" · ");
+                  return (
+                    <Link
+                      key={agent.id}
+                      href={`${basePath}/agents/${agent.id}`}
+                      className="-mx-2 flex items-center justify-between gap-4 rounded-md px-2 py-2 transition-colors hover:bg-muted/60"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar className="size-8">
+                          <AvatarFallback className="text-xs font-medium">{initialsOf(agent.displayName) || "?"}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{agent.displayName}</p>
+                          <p className="truncate text-xs text-muted-foreground">{meta}</p>
+                        </div>
                       </div>
-                    </div>
-                    <AgentStatusBadge agent={agent} />
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
+                      <AgentStatusBadge agent={agent} />
+                    </Link>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Your onboarding</CardTitle>
+              <CardDescription>Complete every required step, then certify yourself.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {myAgentDetail ? (
+                <OnboardingChecklist
+                  agentId={myAgentDetail.id}
+                  steps={onboardingSteps}
+                  completedStepCodes={myAgentDetail.completedStepCodes}
+                  startedAt={myAgentDetail.startedAt}
+                  certifiedAt={myAgentDetail.certifiedAt}
+                  certificationCurrent={myCertificationCurrent}
+                />
+              ) : (
+                <p className="py-6 text-center text-sm text-muted-foreground">No agent profile is linked to your account yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </section>
     </div>
   );

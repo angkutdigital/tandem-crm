@@ -99,14 +99,36 @@ Postgres:
   Postgres (added coverage, confirmed the row landed via SQL, confirmed
   the "Add coverage" control correctly disappeared once no territories
   were left to add).
+- **Overview** (`views/overview.tsx`, `components/onboarding-checklist.tsx`)
+  now also has the per-agent branch: an agent sees their own onboarding
+  checklist (toggle a step, certify themselves) instead of the manager's
+  roster view, matching examples/dashboard's own role split. Live-verified
+  by switching identity to a real agent, completing the remaining required
+  step, certifying, and confirming `certified_at` landed via SQL.
+- **Earnings** (`views/earnings.tsx`, `components/earnings-chart.tsx`) —
+  summary totals, a 6-month paid-commission chart, and the paid-payout
+  list. Deliberately simpler than examples/dashboard's own
+  `EarningsDashboard`, which uses a DataGrid/tanstack-table subsystem and a
+  shadcn chart wrapper Camp doesn't carry -- this reuses Camp's existing
+  `Table` primitive and `recharts` directly (already a dependency) instead
+  of porting that whole subsystem for one screen; no search/sort/CSV
+  export yet. Caught a real bug during live verification, not just typecheck:
+  the chart was first written directly inside the async Server Component
+  view, which fails at runtime (recharts needs a Client Component
+  boundary) even though it typechecks and builds cleanly -- moved into its
+  own `"use client"` component.
+- **Settings** (`views/settings-setup.tsx`, `views/settings-waypoint.tsx`,
+  `components/workspace-setup-forms.tsx`, `components/waypoint-strategy-form.tsx`) --
+  onboarding requirements, routing territories, commission policy, linking
+  a host-authenticated user to an agent profile, and the Waypoint routing
+  strategy picker. The dashboard's `isDemoAuth`-only branch on the last
+  setup section isn't ported (no Camp equivalent -- a real host always has
+  a real auth provider). Live-verified: added a real territory and
+  switched the routing strategy, both confirmed via SQL.
 
-**Not yet migrated** (still only in `examples/dashboard`): Earnings,
-Settings (workspace setup, Waypoint strategy), the Leads kanban board, and
-the per-agent Overview variant (the agent's own onboarding-checklist view,
-as opposed to the manager view Overview has today). Each of these is a
-real, separately-verifiable slice of work, not a formality — migrate and
-live-verify one at a time, the same way every screen above was done,
-rather than moving several at once unverified.
+**Not yet migrated** (still only in `examples/dashboard`): the Leads
+kanban board. Migrate and live-verify it the same way every screen above
+was done, not as an afterthought.
 
 **On delegating a migration to DeepSeek/aider:** three attempts across two
 screens have now failed. Agents: the first stalled asking a clarifying

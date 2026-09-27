@@ -1,0 +1,43 @@
+import { getWaypointStrategy, requireCurrentMember } from "../queries.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
+import { WaypointStrategyForm } from "../components/waypoint-strategy-form.js";
+
+export async function SettingsWaypointView() {
+  const member = await requireCurrentMember();
+
+  // Routing policy is an owner-level decision, not something an agent or
+  // partner should even see, let alone change.
+  if (member.role !== "owner") {
+    return (
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            Only the workspace owner can view routing settings.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const strategy = await getWaypointStrategy(member.userId);
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
+      <header className="flex flex-col gap-1.5">
+        <h1 className="text-2xl font-semibold tracking-tight">Waypoint</h1>
+      </header>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Lead routing strategy</CardTitle>
+          <CardDescription>
+            New leads are assigned to an agent automatically according to this strategy.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <WaypointStrategyForm currentStrategy={strategy} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

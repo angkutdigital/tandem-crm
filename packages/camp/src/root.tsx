@@ -8,7 +8,9 @@ const NAV_ITEMS = [
   { segment: "leads", label: "Leads" },
   { segment: "agents", label: "Agents" },
   { segment: "payouts", label: "Payouts" },
+  { segment: "earnings", label: "Earnings" },
   { segment: "disputes", label: "Disputes" },
+  { segment: "settings", label: "Settings" },
 ] as const;
 
 function CampNav({ basePath, activeSegment }: { basePath: string; activeSegment: string }) {
@@ -41,8 +43,9 @@ function CampNav({ basePath, activeSegment }: { basePath: string; activeSegment:
  * links and pagination links correctly regardless of where a host chooses
  * to mount it.
  *
- * Five sections exist today (Overview, Leads, Agents, Payouts, Disputes) -- see
- * packages/camp/README.md's migration status for what's not here yet.
+ * Seven sections exist today (Overview, Leads, Agents, Payouts, Earnings,
+ * Disputes, Settings) -- see packages/camp/README.md's migration status
+ * for what's not here yet (currently just the Leads kanban board).
  * An unrecognized segment 404s rather than silently rendering nothing.
  *
  * Each view is imported dynamically inside its own switch branch, not
@@ -72,7 +75,7 @@ export async function CampRootPage({
   switch (section) {
     case undefined: {
       const { OverviewView } = await import("./views/overview.js");
-      view = <OverviewView />;
+      view = <OverviewView basePath={basePath} />;
       break;
     }
     case "leads": {
@@ -104,6 +107,26 @@ export async function CampRootPage({
       if (rest.length > 0) notFound();
       const { PayoutsView } = await import("./views/payouts.js");
       view = <PayoutsView />;
+      break;
+    }
+    case "earnings": {
+      if (rest.length > 0) notFound();
+      const { EarningsView } = await import("./views/earnings.js");
+      view = <EarningsView />;
+      break;
+    }
+    case "settings": {
+      if (rest.length > 1) notFound();
+      const sub = rest[0] ?? "setup";
+      if (sub === "setup") {
+        const { SettingsSetupView } = await import("./views/settings-setup.js");
+        view = <SettingsSetupView />;
+      } else if (sub === "waypoint") {
+        const { SettingsWaypointView } = await import("./views/settings-waypoint.js");
+        view = <SettingsWaypointView />;
+      } else {
+        notFound();
+      }
       break;
     }
     case "disputes": {

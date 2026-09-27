@@ -615,3 +615,127 @@ export async function correctTrailEntry(leadId: string, entryId: string, input: 
 export async function retractTrailEntry(leadId: string, entryId: string): Promise<void> {
   await appendTrailEvent(leadId, entryId, "trail.entry_retracted", {});
 }
+
+export async function createOnboardingStep(input: { code: string; label: string; required: boolean }): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const code = input.code.trim().toLowerCase();
+  const label = input.label.trim();
+  if (!/^[a-z][a-z0-9_]*$/.test(code)) {
+    throw new Error("step code must start with a letter and use lowercase letters, numbers, or underscores");
+  }
+  if (!label) throw new Error("step label is required");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const order = await client.query<{ next_order: number }>(
+      "select coalesce(max(sort_order), -1) + 1 as next_order from tandem.onboarding_steps where workspace_id = $1",
+      [workspaceId]
+    );
+    await client.query(
+      `insert into tandem.onboarding_steps (workspace_id, code, label, required, sort_order)
+       values ($1, $2, $3, $4, $5)`,
+      [workspaceId, code, label, input.required, order.rows[0].next_order]
+    );
+  });
+  revalidatePath("/tandem-camp/agents");
+  revalidatePath("/tandem-camp/settings/setup");
+}
+
+export async function createTerritory(input: { name: string; code: string }): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const name = input.name.trim();
+  const code = input.code.trim().toUpperCase();
+  if (!name) throw new Error("territory name is required");
+  if (!/^[A-Z0-9_-]+$/.test(code)) throw new Error("territory code must use uppercase letters, numbers, hyphens, or underscores");
+
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.territories (workspace_id, name, code)
+       values ($1, $2, $3)`,
+      [workspaceId, name, code]
+    )
+  );
+  revalidatePath("/tandem-camp/settings/setup");
+  revalidatePath("/tandem-camp/settings/waypoint");
+}
+
+export async function createCommissionRule(input: {
+  productTag: string;
+  currency: string;
+  basisPoints: number;
+  holdDays: number;
+}): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const productTag = input.productTag.trim();
+  const currency = input.currency.trim().toUpperCase();
+  if (!productTag) throw new Error("product tag is required");
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error("currency must be a three-letter ISO code, for example MYR");
+  if (!Number.isSafeInteger(input.basisPoints) || input.basisPoints < 0 || input.basisPoints > 10_000) {
+    throw new Error("commission rate must be between 0 and 10,000 basis points");
+  }
+  if (!Number.isSafeInteger(input.holdDays) || input.holdDays < 0) {
+    throw new Error("hold days must be a whole number of zero or more");
+  }
+
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.commission_rules
+         (workspace_id, product_tag, currency, basis_points, hold_days)
+       values ($1, $2, $3, $4, $5)`,
+      [workspaceId, productTag, currency, input.basisPoints, input.holdDays]
+    )
+  );
+  revalidatePath("/tandem-camp/settings/setup");
+}
+
+/** Links a user the host has already authenticated to one operational agent
+ * profile. This never creates credentials or changes a person's workspace
+ * privilege: managers may only add an agent membership, and an existing
+ * membership is rejected rather than overwritten. */
+export async function linkExistingUserToAgent(input: { userId: string; agentId: string }): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  const userId = input.userId.trim();
+  const agentId = input.agentId.trim();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuid.test(userId)) throw new Error("host user ID must be a UUID from your verified auth system");
+  if (!uuid.test(agentId)) throw new Error("select a valid agent profile");
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const agent = await client.query(
+      "select id from tandem.agents where id = $1 and workspace_id = $2",
+      [agentId, workspaceId]
+    );
+    if (agent.rowCount !== 1) throw new Error("agent profile was not found in this workspace");
+    const existing = await client.query(
+      "select id from tandem.members where workspace_id = $1 and user_id = $2",
+      [workspaceId, userId]
+    );
+    if (existing.rowCount !== 0) throw new Error("this host account is already linked to this workspace");
+    await client.query(
+      `insert into tandem.members (workspace_id, user_id, role, agent_id)
+       values ($1, $2, 'agent', $3)`,
+      [workspaceId, userId, agentId]
+    );
+  });
+  revalidatePath("/tandem-camp/settings/setup");
+}
+
+export async function setWaypointStrategy(strategy: "round_robin" | "least_loaded" | "manual"): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.waypoint_settings (workspace_id, strategy, updated_at) values ($1, $2, now())
+       on conflict (workspace_id) do update set strategy = excluded.strategy, updated_at = now()`,
+      [workspaceId, strategy]
+    )
+  );
+  revalidatePath("/tandem-camp/settings/waypoint");
+}

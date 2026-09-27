@@ -493,3 +493,115 @@ export async function getTrailEntries(userId: string, leadId: string): Promise<T
     loggedAt: toISO(row.logged_at), correctedAt: toISO(row.corrected_at), retracted: row.retracted,
   }));
 }
+
+export type CommissionRule = {
+  id: string;
+  productTag: string;
+  currency: string;
+  basisPoints: number;
+  holdDays: number;
+  active: boolean;
+};
+
+export async function getCommissionRules(userId: string): Promise<CommissionRule[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; product_tag: string; currency: string; basis_points: number;
+      hold_days: number; active: boolean;
+    }>(
+      `select id, product_tag, currency, basis_points, hold_days, active
+       from tandem.commission_rules
+       where workspace_id = $1
+       order by product_tag, currency`,
+      [workspaceId]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id, productTag: row.product_tag, currency: row.currency,
+    basisPoints: Number(row.basis_points), holdDays: Number(row.hold_days), active: row.active,
+  }));
+}
+
+export type WaypointStrategy = "round_robin" | "least_loaded" | "manual";
+
+export async function getWaypointStrategy(userId: string): Promise<WaypointStrategy> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ strategy: WaypointStrategy }>(
+      `select strategy from tandem.waypoint_settings where workspace_id = $1 limit 1`,
+      [workspaceId]
+    )
+  );
+  return result.rows[0]?.strategy ?? "round_robin";
+}
+
+export type EarningsSummary = { lifetimeMinor: number; yearMinor: number; monthMinor: number; weekMinor: number; currency: string | null };
+
+/** Paid commissions only -- held/eligible/approved money hasn't actually
+ * been earned yet, and a clawback on a paid one still counts as earned. */
+export async function getEarningsSummary(userId: string): Promise<EarningsSummary> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ lifetime_minor: string; year_minor: string; month_minor: string; week_minor: string; currency: string | null }>(
+      `select
+         coalesce(sum(amount_minor), 0) as lifetime_minor,
+         coalesce(sum(amount_minor) filter (where paid_at >= date_trunc('year', now())), 0) as year_minor,
+         coalesce(sum(amount_minor) filter (where paid_at >= date_trunc('month', now())), 0) as month_minor,
+         coalesce(sum(amount_minor) filter (where paid_at >= date_trunc('week', now())), 0) as week_minor,
+         min(currency) as currency
+       from tandem.payouts where workspace_id = $1 and status = 'paid'`,
+      [workspaceId]
+    )
+  );
+  const row = result.rows[0];
+  return {
+    lifetimeMinor: Number(row?.lifetime_minor ?? 0), yearMinor: Number(row?.year_minor ?? 0),
+    monthMinor: Number(row?.month_minor ?? 0), weekMinor: Number(row?.week_minor ?? 0),
+    currency: row?.currency ?? null,
+  };
+}
+
+export type MonthlyMetrics = { month: string; commissionsClosedCount: number; commissionsClosedMinor: number; leadsCreatedCount: number };
+
+/** Last 6 full months including the current one, oldest first, with a zero
+ * row for any month with no activity. */
+export async function getMonthlyMetrics(userId: string): Promise<MonthlyMetrics[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ month: string; commissions_closed_count: string; commissions_closed_minor: string; leads_created_count: string }>(
+      `with months as (
+         select to_char(date_trunc('month', now()) - (n || ' months')::interval, 'YYYY-MM') as month
+         from generate_series(0, 5) as n
+       ),
+       closed as (
+         select to_char(date_trunc('month', paid_at), 'YYYY-MM') as month,
+                count(*) as commissions_closed_count, sum(amount_minor) as commissions_closed_minor
+         from tandem.payouts
+         where workspace_id = $1 and status = 'paid' and paid_at >= date_trunc('month', now()) - interval '5 months'
+         group by 1
+       ),
+       created as (
+         select to_char(date_trunc('month', created_at), 'YYYY-MM') as month, count(*) as leads_created_count
+         from tandem.leads
+         where workspace_id = $1 and created_at >= date_trunc('month', now()) - interval '5 months'
+         group by 1
+       )
+       select months.month,
+              coalesce(closed.commissions_closed_count, 0) as commissions_closed_count,
+              coalesce(closed.commissions_closed_minor, 0) as commissions_closed_minor,
+              coalesce(created.leads_created_count, 0) as leads_created_count
+       from months
+       left join closed on closed.month = months.month
+       left join created on created.month = months.month
+       order by months.month`,
+      [workspaceId]
+    )
+  );
+  return result.rows.map((row) => ({
+    month: row.month,
+    commissionsClosedCount: Number(row.commissions_closed_count),
+    commissionsClosedMinor: Number(row.commissions_closed_minor),
+    leadsCreatedCount: Number(row.leads_created_count),
+  }));
+}
