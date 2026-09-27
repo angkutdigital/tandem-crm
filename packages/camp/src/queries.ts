@@ -302,3 +302,107 @@ export async function getDisputeDetail(userId: string, disputeId: string): Promi
     };
   });
 }
+
+export type OnboardingStep = { code: string; label: string; required: boolean; sortOrder: number };
+
+export async function getOnboardingSteps(userId: string): Promise<OnboardingStep[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ code: string; label: string; required: boolean; sort_order: number }>(
+      `select code, label, required, sort_order from tandem.onboarding_steps
+       where workspace_id = $1 order by sort_order`,
+      [workspaceId]
+    )
+  );
+  return result.rows.map((row) => ({ code: row.code, label: row.label, required: row.required, sortOrder: row.sort_order }));
+}
+
+export type TerritorySummary = { id: string; name: string; code: string; active: boolean; agentCount: number };
+
+export async function getTerritories(userId: string): Promise<TerritorySummary[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{
+      id: string; name: string; code: string; active: boolean; agent_count: string;
+    }>(
+      `select t.id, t.name, t.code, t.active,
+              count(at.agent_id) as agent_count
+       from tandem.territories t
+       left join tandem.agent_territories at
+         on at.workspace_id = t.workspace_id and at.territory_id = t.id
+       where t.workspace_id = $1
+       group by t.id, t.name, t.code, t.active
+       order by t.name`,
+      [workspaceId]
+    )
+  );
+  return result.rows.map((row) => ({
+    id: row.id, name: row.name, code: row.code, active: row.active,
+    agentCount: Number(row.agent_count),
+  }));
+}
+
+export async function getAgentTerritoryIds(userId: string, agentId: string): Promise<string[]> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const result = await withTandemSession(pool, userId, (client) =>
+    client.query<{ territory_id: string }>(
+      `select territory_id from tandem.agent_territories
+       where workspace_id = $1 and agent_id = $2 order by territory_id`,
+      [workspaceId, agentId]
+    )
+  );
+  return result.rows.map((row) => row.territory_id);
+}
+
+export type AgentDetail = {
+  id: string;
+  displayName: string;
+  active: boolean;
+  startedAt: string | null;
+  certifiedAt: string | null;
+  completedStepCodes: string[];
+  leads: Array<{ id: string; companyName: string; pipelineStatus: string; updatedAt: string }>;
+};
+
+export async function getAgentDetail(userId: string, agentId: string): Promise<AgentDetail | null> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  return withTandemSession(pool, userId, async (client) => {
+    const agentResult = await client.query<{
+      id: string; display_name: string; active: boolean;
+      started_at: string | null; certified_at: string | null;
+    }>(
+      `select a.id, a.display_name, a.active, s.started_at, s.certified_at
+       from tandem.agents a
+       left join tandem.agent_onboarding_status s on s.workspace_id = a.workspace_id and s.agent_id = a.id
+       where a.id = $1 and a.workspace_id = $2`,
+      [agentId, workspaceId]
+    );
+    const agent = agentResult.rows[0];
+    if (!agent) return null;
+
+    const stepsResult = await client.query<{ step_code: string }>(
+      `select distinct payload->>'stepCode' as step_code
+       from tandem.agent_events
+       where agent_id = $1 and workspace_id = $2 and event_type = 'onboarding.step_completed'`,
+      [agentId, workspaceId]
+    );
+
+    const leadsResult = await client.query<{ id: string; company_name: string; pipeline_status: string; updated_at: string }>(
+      `select id, company_name, pipeline_status, updated_at from tandem.leads
+       where assignee_id = $1 and workspace_id = $2 order by updated_at desc`,
+      [agentId, workspaceId]
+    );
+
+    return {
+      id: agent.id,
+      displayName: agent.display_name,
+      active: agent.active,
+      startedAt: toISO(agent.started_at),
+      certifiedAt: toISO(agent.certified_at),
+      completedStepCodes: stepsResult.rows.map((r) => r.step_code),
+      leads: leadsResult.rows.map((r) => ({
+        id: r.id, companyName: r.company_name, pipelineStatus: r.pipeline_status, updatedAt: toISO(r.updated_at),
+      })),
+    };
+  });
+}

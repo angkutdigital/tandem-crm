@@ -6,6 +6,7 @@ import { Toaster } from "./components/ui/sonner.js";
 const NAV_ITEMS = [
   { segment: "", label: "Overview" },
   { segment: "leads", label: "Leads" },
+  { segment: "agents", label: "Agents" },
   { segment: "payouts", label: "Payouts" },
   { segment: "disputes", label: "Disputes" },
 ] as const;
@@ -40,7 +41,7 @@ function CampNav({ basePath, activeSegment }: { basePath: string; activeSegment:
  * links and pagination links correctly regardless of where a host chooses
  * to mount it.
  *
- * Four sections exist today (Overview, Leads, Payouts, Disputes) -- see
+ * Five sections exist today (Overview, Leads, Agents, Payouts, Disputes) -- see
  * packages/camp/README.md's migration status for what's not here yet.
  * An unrecognized segment 404s rather than silently rendering nothing.
  *
@@ -81,6 +82,17 @@ export async function CampRootPage({
       const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
       const { LeadsView } = await import("./views/leads.js");
       view = <LeadsView page={page} basePath={`${basePath}/leads`} />;
+      break;
+    }
+    case "agents": {
+      if (rest.length > 1) notFound();
+      if (rest.length === 1) {
+        const { AgentDetailView } = await import("./views/agent-detail.js");
+        view = <AgentDetailView agentId={rest[0]} basePath={`${basePath}/agents`} />;
+      } else {
+        const { AgentsView } = await import("./views/agents.js");
+        view = <AgentsView basePath={`${basePath}/agents`} />;
+      }
       break;
     }
     case "payouts": {

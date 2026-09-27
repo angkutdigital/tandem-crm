@@ -2,10 +2,10 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { replayLeadEvents, type TandemEvent } from "tandem-crm";
+import { replayLeadEvents, replayAgentOnboardingEvents, type TandemEvent, type AgentOnboardingEvent } from "tandem-crm";
 import { withTandemSession } from "tandem-crm/db";
 import { getTandemCampConfig } from "./config.js";
-import { requireCurrentMember } from "./queries.js";
+import { requireCurrentMember, getOnboardingSteps } from "./queries.js";
 
 async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): Promise<TandemEvent[]> {
   const { workspaceId } = getTandemCampConfig();
@@ -248,4 +248,117 @@ export async function executeDisputeOutcome(
     await appendLeadEvent(leadId, "commission.clawback_requested", { payoutId, amountMinor, reason: reasonOrReleaseAt }, idempotency);
   }
   revalidatePath("/tandem-camp/disputes");
+}
+
+function requireWorkspaceManager(member: { role: "owner" | "admin" | "agent" }): void {
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can change workspace setup");
+  }
+}
+
+async function loadAgentEvents(client: import("pg").PoolClient, agentId: string): Promise<AgentOnboardingEvent[]> {
+  const { workspaceId } = getTandemCampConfig();
+  const result = await client.query<{
+    id: string; sequence: number; event_type: string; payload: Record<string, unknown>; occurred_at: string;
+    source: string; source_event_id: string;
+  }>(
+    `select id, sequence, event_type, payload, occurred_at, source, source_event_id
+     from tandem.agent_events where agent_id = $1 and workspace_id = $2 order by sequence`,
+    [agentId, workspaceId]
+  );
+  return result.rows.map((row) => ({
+    id: row.id, sequence: Number(row.sequence), workspaceId, agentId,
+    source: row.source, sourceEventId: row.source_event_id,
+    occurredAt: new Date(row.occurred_at).toISOString(),
+    type: row.event_type, data: row.payload,
+  })) as AgentOnboardingEvent[];
+}
+
+async function appendOnboardingEvent(
+  agentId: string,
+  type: AgentOnboardingEvent["type"],
+  data: AgentOnboardingEvent["data"]
+): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  await withTandemSession(pool, member.userId, async (client) => {
+    const existing = await loadAgentEvents(client, agentId);
+    const nextSequence = existing.length > 0 ? existing[existing.length - 1].sequence + 1 : 1;
+    const newEvent = {
+      id: randomUUID(), sequence: nextSequence, workspaceId, agentId,
+      source: "camp", sourceEventId: `camp-${randomUUID()}`, occurredAt: new Date().toISOString(),
+      type, data,
+    } as AgentOnboardingEvent;
+
+    const state = replayAgentOnboardingEvents([...existing, newEvent], workspaceId, agentId);
+
+    await client.query(
+      `insert into tandem.agent_events
+         (id, workspace_id, agent_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [newEvent.id, workspaceId, agentId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+    );
+    await client.query(
+      `insert into tandem.agent_onboarding_status (workspace_id, agent_id, started_at, certified_at, last_event_sequence)
+       values ($1, $2, $3, $4, $5)
+       on conflict (workspace_id, agent_id) do update
+         set started_at = excluded.started_at, certified_at = excluded.certified_at,
+             last_event_sequence = excluded.last_event_sequence, updated_at = now()`,
+      [workspaceId, agentId, state?.startedAt ?? null, state?.certifiedAt ?? null, state?.lastSequence ?? null]
+    );
+  });
+  revalidatePath("/tandem-camp/agents");
+}
+
+export async function completeOnboardingStep(agentId: string, stepCode: string, alreadyStarted: boolean): Promise<void> {
+  if (!alreadyStarted) await appendOnboardingEvent(agentId, "onboarding.started", {});
+  await appendOnboardingEvent(agentId, "onboarding.step_completed", { stepCode });
+}
+
+/** Certifying is the implementing application's call, same as any gate
+ * Tandem tracks but doesn't enforce -- this only requires what the reducer
+ * itself requires (onboarding started, not already certified), but the UI
+ * that calls this only enables the button once every required step is
+ * complete, applying isAgentCurrentlyCertified() as the actual business
+ * policy. */
+export async function certifyAgent(agentId: string): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  const requiredSteps = (await getOnboardingSteps(member.userId)).filter((s) => s.required);
+  const state = await withTandemSession(pool, member.userId, async (client) => {
+    const events = await loadAgentEvents(client, agentId);
+    return events.length > 0 ? replayAgentOnboardingEvents(events, workspaceId, agentId) : null;
+  });
+  const completed = state?.completedStepCodes ?? [];
+  const outstanding = requiredSteps.filter((step) => !completed.includes(step.code));
+  if (outstanding.length > 0) {
+    throw new Error(`required steps not yet complete: ${outstanding.map((s) => s.label).join(", ")}`);
+  }
+  await appendOnboardingEvent(agentId, "onboarding.certified", {});
+}
+
+/** Only an owner/admin may reopen a certification after the workspace changes
+ * its requirements. The database enforces the same boundary as defence in
+ * depth; this check gives the application a clear, immediate error too. */
+export async function reopenAgentCertification(agentId: string): Promise<void> {
+  const member = await requireCurrentMember();
+  if (member.role !== "owner" && member.role !== "admin") {
+    throw new Error("only a workspace owner or admin can reopen certification");
+  }
+  await appendOnboardingEvent(agentId, "onboarding.reopened", {});
+}
+
+export async function assignAgentToTerritory(agentId: string, territoryId: string): Promise<void> {
+  const { pool, workspaceId } = getTandemCampConfig();
+  const member = await requireCurrentMember();
+  requireWorkspaceManager(member);
+  await withTandemSession(pool, member.userId, (client) =>
+    client.query(
+      `insert into tandem.agent_territories (workspace_id, agent_id, territory_id)
+       values ($1, $2, $3)
+       on conflict do nothing`,
+      [workspaceId, agentId, territoryId]
+    )
+  );
+  revalidatePath("/tandem-camp/agents");
 }

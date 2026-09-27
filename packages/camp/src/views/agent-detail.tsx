@@ -1,0 +1,195 @@
+import Link from "next/link";
+
+import { Badge } from "../components/ui/badge.js";
+import { Button } from "../components/ui/button.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.js";
+import { AgentTerritoryManager } from "../components/agent-territory-manager.js";
+import {
+  getAgentDetail,
+  getAgentTerritoryIds,
+  getOnboardingSteps,
+  getTerritories,
+  requireCurrentMember,
+} from "../queries.js";
+import { reopenAgentCertification } from "../actions.js";
+
+function humanizeStatus(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+const statusVariantMap: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  Automated_Setup: "outline", Manual_Review: "outline", Won: "secondary",
+  Commission_Hold: "secondary", Commission_Eligible: "secondary", Commission_Paid: "default",
+  Lost: "destructive", Refunded: "destructive",
+};
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+/**
+ * Camp's Agent detail view: onboarding progress, territory coverage
+ * (including the AgentTerritoryManager mutation, ported as-is -- it's
+ * already a plain native <select> + Button, no new UI primitive needed),
+ * assigned leads, and the reopen-certification action, bound directly as
+ * a server action on a plain <form> the same way the reference dashboard
+ * does it (no client component needed for a single-button form).
+ */
+export async function AgentDetailView({ agentId, basePath }: { agentId: string; basePath: string }) {
+  const member = await requireCurrentMember();
+  const [agent, steps, territories] = await Promise.all([
+    getAgentDetail(member.userId, agentId),
+    getOnboardingSteps(member.userId),
+    getTerritories(member.userId),
+  ]);
+
+  if (!agent) {
+    return (
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">Agent not found.</CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const requiredSteps = steps.filter((step) => step.required);
+  const assignedTerritoryIds = await getAgentTerritoryIds(member.userId, agent.id);
+  const assignedTerritories = territories.filter((territory) => assignedTerritoryIds.includes(territory.id));
+  const canManageWorkspace = member.role === "owner" || member.role === "admin";
+  const completedRequired = requiredSteps.filter((step) => agent.completedStepCodes.includes(step.code)).length;
+  const certificationCurrent = agent.certifiedAt !== null && completedRequired === requiredSteps.length;
+  const canReopenCertification = canManageWorkspace && agent.certifiedAt !== null && !certificationCurrent;
+
+  const statusBadge = certificationCurrent ? (
+    <Badge>Certified</Badge>
+  ) : agent.certifiedAt ? (
+    <Badge variant="destructive">Needs review</Badge>
+  ) : agent.startedAt ? (
+    <Badge variant="secondary">In progress</Badge>
+  ) : (
+    <Badge variant="outline">Not started</Badge>
+  );
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8 lg:px-10 lg:py-10">
+      <header className="flex flex-col gap-1.5">
+        <Link href={basePath} className="text-sm text-muted-foreground hover:text-foreground">&larr; Back to agents</Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">{agent.displayName}</h1>
+          {statusBadge}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {certificationCurrent
+            ? `Certified ${formatDate(agent.certifiedAt!)}`
+            : agent.certifiedAt
+              ? "Certification needs review after the onboarding requirements changed"
+              : agent.startedAt
+                ? `Started onboarding ${formatDate(agent.startedAt)}`
+                : "Has not started onboarding yet"}
+        </p>
+      </header>
+
+      {canReopenCertification ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Certification needs review</CardTitle>
+            <CardDescription>
+              This agent was certified before the current required checklist was complete. Reopen the lifecycle so they can complete the new requirement and certify again; prior history remains in the audit log.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form action={reopenAgentCertification.bind(null, agent.id)}>
+              <Button type="submit" variant="outline">Reopen certification</Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Onboarding progress</CardTitle>
+          <CardDescription>{completedRequired} / {requiredSteps.length} required steps complete</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {steps.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No onboarding steps configured.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {steps.map((step) => {
+                const done = agent.completedStepCodes.includes(step.code);
+                return (
+                  <li key={step.code} className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{step.label}</span>
+                      {step.required && <span className="text-xs text-muted-foreground">Required</span>}
+                    </div>
+                    <Badge variant={done ? "default" : "outline"}>{done ? "Complete" : "Outstanding"}</Badge>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Territory coverage</CardTitle>
+          <CardDescription>Automatic routing considers this agent only for leads in the territories listed here.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {assignedTerritories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No territory coverage yet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {assignedTerritories.map((territory) => (
+                <Badge key={territory.id} variant="secondary">{territory.name} · {territory.code}</Badge>
+              ))}
+            </div>
+          )}
+          <AgentTerritoryManager
+            agentId={agent.id}
+            territories={territories}
+            assignedTerritoryIds={assignedTerritoryIds}
+            canManage={canManageWorkspace}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Leads</CardTitle>
+          <CardDescription>Leads assigned to this agent.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {agent.leads.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No leads assigned yet.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Updated</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {agent.leads.map((lead) => (
+                  <TableRow key={lead.id}>
+                    <TableCell className="font-medium">{lead.companyName}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariantMap[lead.pipelineStatus] ?? "outline"}>{humanizeStatus(lead.pipelineStatus)}</Badge>
+                    </TableCell>
+                    <TableCell>{formatDate(lead.updatedAt)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
