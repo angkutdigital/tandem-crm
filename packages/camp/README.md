@@ -84,18 +84,35 @@ Postgres:
   a fresh dispute end to end (open → resolve upheld → adjust → confirmed
   the payout's displayed amount actually changed, and that re-applying is
   correctly rejected as already-applied).
+- **Agents** (`views/agents.tsx`, `views/agent-detail.tsx`,
+  `components/agent-territory-manager.tsx`, `actions.ts`) — roster, detail
+  (onboarding progress, territory coverage, assigned leads), and real
+  mutations: adding territory coverage and reopening a certification. Agent
+  *creation* ("Add agent") is deliberately not migrated — it needs Dialog
+  UI primitives this package doesn't have yet. Live-verified including the
+  territory-coverage mutation end to end against real Postgres (added
+  coverage, confirmed the row landed via SQL, confirmed the "Add coverage"
+  control correctly disappeared once no territories were left to add).
 
-**Not yet migrated** (still only in `examples/dashboard`): Agents (roster +
-detail + onboarding actions), Earnings, Settings (workspace setup,
-Waypoint strategy), lead detail + Trail activity, the Leads kanban board,
-the "New lead" dialog, and the per-agent Overview variant named above.
-Each of these is a real, separately-verifiable slice of work, not a
-formality — migrate and live-verify one at a time, the same way
-Overview/Leads/Payouts/Disputes were done, rather than moving several at
-once unverified. (An attempt to delegate the Agents migration to a
-DeepSeek/aider dispatch stalled asking a clarifying question it couldn't
-get an answer to in non-interactive mode, and produced nothing usable —
-worth knowing before trying that route again for the remaining screens.)
+**Not yet migrated** (still only in `examples/dashboard`): Earnings,
+Settings (workspace setup, Waypoint strategy), lead detail + Trail
+activity, the Leads kanban board, the "New lead" dialog, "Add agent", and
+the per-agent Overview variant (the agent's own onboarding-checklist view,
+as opposed to the manager view Overview has today). Each of these is a
+real, separately-verifiable slice of work, not a formality — migrate and
+live-verify one at a time, the same way every screen above was done,
+rather than moving several at once unverified.
+
+**On delegating a migration to DeepSeek/aider:** two attempts for Agents
+both failed, for different reasons — the first stalled asking a
+clarifying question it couldn't get an answer to in non-interactive mode
+(fixed in the retry by including the exact info it needed directly in the
+prompt); the second, with that fix applied, got stuck in a degenerate
+"Writing. / Let me write. / OK." repetition loop for 65,000+ lines without
+producing any real file content, and had to be killed. Agents ended up
+migrated by hand. Worth knowing before trying this route again for the
+remaining screens — it may need closer supervision (checking in early,
+not just at the end) rather than a fire-and-forget dispatch.
 
 **Code-splitting:** `root.tsx` dynamically imports each view inside its own
 routing branch rather than statically at the top of the file, so visiting

@@ -3,6 +3,127 @@
 Temporary file, not meant to live in the repo long-term. Delete it once
 whoever picks this up next has read it and it's stale.
 
+## Update (2026-09-27): Agents migrated to Camp (by hand, after two failed DeepSeek dispatches); live public demo shipped with a real-time event feed
+
+### Agents migration
+
+The fifth screen migrated into `tandem-camp` (Overview, Leads, Payouts,
+Disputes, now Agents). Roster + detail (onboarding progress, territory
+coverage, assigned leads) + two real mutations (add territory coverage,
+reopen certification). Agent creation ("Add agent") deliberately not
+migrated -- needs Dialog UI primitives this package doesn't have yet.
+
+**Two DeepSeek/aider dispatch attempts for this screen, both failed
+differently:**
+1. First attempt: detailed self-contained prompt, but it asked a
+   clarifying question ("what's in packages/camp/src/components/ui/?")
+   that a non-interactive `--message-file` dispatch has no way to answer,
+   so it exited having created one empty placeholder file.
+2. Second attempt: same prompt, but with that exact missing info (the
+   full current UI directory listing) included directly this time, so it
+   wouldn't need to ask. It got stuck instead in a degenerate loop --
+   "Writing. / Let me write. / OK." repeated for over 65,000 lines and
+   25+ minutes, three empty target files, never producing real content.
+   Killed manually.
+
+Migrated by hand after that. Verified via a real, load-bearing mistake
+caught mid-verification, not a clean first pass: a `get_page_text` flat
+extraction of the agent detail page made it look like a territory that
+was NOT assigned (South) was rendering as if it WERE assigned, alongside
+the one that genuinely was (North) -- looked exactly like a real RLS or
+rendering bug. Traced properly (a raw SQL query through the exact same
+RLS session path the app uses, then the actual RSC payload) before
+touching any code: the underlying data and rendering were both already
+correct; "South · south" was the *available-to-add* dropdown's current
+selection, not a second assigned badge, and the flat text scraper had
+concatenated the two visually-separate pieces of UI into what looked like
+one list. No code change was needed -- the lesson is to verify a
+suspected bug against the actual DOM/RSC structure before assuming the
+first, easiest-to-misread signal is correct, especially when a bug would
+be surprising given everything else about the port was mechanical and
+already proven. The real mutation (adding South's coverage via the
+"Add coverage" button) was then exercised for real and confirmed via SQL
+independently of the browser tooling.
+
+### Live public demo: real event feed, real Vercel deploy issues found and fixed (see below)
+
+The live-demo work from earlier this session went from "data layer built,
+nothing hosted" to actually live and linked from the marketing site:
+- `tandem-crm-demo` (Vercel, Hobby plan) now serves `examples/dashboard`
+  against a real Neon Postgres project, seeded via
+  `examples/dashboard/scripts/seed.mjs` with the fixed demo workspace id
+  `d000c000-0000-4000-8000-000000000001`.
+- `examples/dashboard/app/api/live-events/route.ts`: a public, read-only
+  Server-Sent Events feed of this deployment's own event log (type +
+  timestamp only, no payload), polling `tandem.events`/`agent_events`/
+  `dispute_events`/`trail_events` by their existing identity-column
+  `sequence` (already a real, globally-increasing primary key -- no new
+  schema needed). Built specifically so tandem-site's new `/demo` page
+  could show the actual dashboard in an iframe next to a live terminal-
+  style feed of its own database changing in real time -- "event-sourced"
+  as something a visitor watches happen, not just copy.
+- **Real bug caught before shipping, not after:** the first version of
+  that route queried `pool` directly instead of going through
+  `withTandemSession`, so RLS silently returned zero rows forever -- no
+  error, no warning, just an empty feed -- exactly the "looks like it
+  works, actually RLS never applied" trap this project's own README
+  already warns about elsewhere, and which this same session already hit
+  once before (the health-check tooling). Fixed by authenticating the
+  feed's queries as the demo workspace's own fixed owner id, the same
+  identity the dashboard itself already defaults to -- verified end to
+  end with curl against a real Postgres instance, generating a live event
+  in a separate process and confirming it streamed through within one
+  poll interval.
+- `tandem-site/src/pages/demo.html` (new): the iframe + live-feed page.
+  Nav/hero/footer "Live demo" links across the marketing site now point
+  here instead of opening the raw dashboard URL in a new tab. Confirmed
+  the dashboard can actually be iframed first (no `X-Frame-Options`/CSP
+  `frame-ancestors` blocking it) before building the page around that
+  assumption.
+- **A stale local checkout caused real confusion mid-task:** the
+  marketing site's actual deployed content (Cloudflare Pages,
+  `tandem-site-84g.pages.dev`) was 5 commits ahead of the local
+  `tandem-site` checkout this session had been editing -- the local copy
+  still had pre-rename module names (Core/Ramp/Coaster) that the live
+  site had already fixed. Caught by actually checking the live URL
+  instead of trusting the local file, before pushing a second stale edit
+  on top of the first. Fixed by stashing the in-progress local edit,
+  pulling, and redoing it against the current file.
+
+### Second Vercel deploy round: two more real, general build bugs found and fixed
+
+Same "reproduce the actual CI conditions, not an approximation of them"
+lesson as before, twice more, on the way to getting `tandem-crm-demo`
+actually live:
+1. **Build-time crash on missing `TANDEM_WORKSPACE_ID`:** `next build`
+   statically evaluates every route module's import graph during its
+   "collect page data" step, on every provider, even for a
+   `force-dynamic` route. `tandem-camp.config.ts` (the Camp verification
+   harness) called `mountTandemCamp()` unconditionally at module load, and
+   its own correct `workspaceId` validation threw, failing the *entire*
+   build over one verification-only route. Fixed by guarding the call.
+2. **`Module not found: Can't resolve 'tandem-crm'` then, one deploy
+   later, `Could not find a declaration file for module 'pg'`:** `dist/`
+   is correctly gitignored for `tandem-crm`/`tandem-camp`, and Vercel's
+   Root Directory setting means `npm install` only ever runs inside
+   `examples/dashboard`, never at the true repo root -- so those packages'
+   own `dist/` and, separately, their own devDependencies (`@types/pg`,
+   needed to typecheck `pg` usage) were never installed anywhere on
+   Vercel. Fixed in two steps, each verified separately by actually wiping
+   every `node_modules`/`dist` on disk and reproducing the literal Vercel
+   install sequence (not an approximation of it) before calling either
+   fix done: `examples/dashboard`'s own `build` script now runs
+   `npm install --prefix ../.. --include=dev` (the `--include=dev` because
+   `NODE_ENV=production`, set for Vercel's whole build step, was silently
+   omitting devDependencies from that nested install) before building
+   `tandem-crm`, then `packages/camp`, then `next build`.
+
+`tandem-crm-demo` is now genuinely live and linked from the marketing
+site's nav, hero, and footer, and from the new `/demo` page. Function
+Region is still on Vercel's Hobby-plan default (a single selectable
+region, not multi-region); worth revisiting once traffic or a Pro upgrade
+makes it worth optimizing.
+
 ## Update (2026-09-27): Disputes/Belay migrated to Camp; first real Vercel deploy attempt found two real, general build bugs
 
 ### Disputes/Belay migration
