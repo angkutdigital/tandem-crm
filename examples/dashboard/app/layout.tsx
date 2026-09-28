@@ -3,7 +3,7 @@ import { IBM_Plex_Mono, Inter } from "next/font/google";
 import "./globals.css";
 
 import { AppSidebar } from "@/components/app-sidebar";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -41,7 +41,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <TooltipProvider delay={300}>
           <SidebarProvider className="h-svh overflow-hidden">
             <AppSidebar />
-            <SidebarInset className="overflow-y-auto">{children}</SidebarInset>
+            <SidebarInset className="overflow-y-auto">
+              {/* Below the sidebar's md breakpoint (768px -- see
+                  hooks/use-mobile.ts), AppSidebar becomes an off-canvas
+                  sheet with no other way to open it. Every page's own
+                  content starts directly with its own <header>, so this
+                  is the one shared place a trigger can live. Hidden at
+                  md+ since the sidebar is always visible there. */}
+              <div className="sticky top-0 z-10 flex items-center border-b bg-background px-4 py-2 md:hidden">
+                <SidebarTrigger />
+              </div>
+              {children}
+            </SidebarInset>
           </SidebarProvider>
           <Toaster position="bottom-right" closeButton />
         </TooltipProvider>
