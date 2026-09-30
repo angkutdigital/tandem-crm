@@ -41,7 +41,36 @@ type FeedRow = {
   sequence: number;
   type: string;
   occurredAt: string;
+  /** Keys and value types of the payload. Never the values themselves. */
+  shape: unknown;
 };
+
+const MAX_SHAPE_DEPTH = 4;
+const MAX_SHAPE_KEYS = 30;
+
+/**
+ * Reduces a payload to its structure: objects keep their keys, every leaf
+ * becomes its type name ("string", "number", "boolean", "null"), arrays
+ * become a one-element list describing their first item. This demo is public
+ * and strangers type into it, so a value must never leave this function;
+ * only key names (which come from the app's own code) and type names do.
+ */
+function shapeOf(value: unknown, depth = 0): unknown {
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    return value.length === 0 || depth >= MAX_SHAPE_DEPTH ? [] : [shapeOf(value[0], depth + 1)];
+  }
+  if (typeof value === "object") {
+    if (depth >= MAX_SHAPE_DEPTH) return "object";
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as object).slice(0, MAX_SHAPE_KEYS)) {
+      out[key.slice(0, 40)] = shapeOf((value as Record<string, unknown>)[key], depth + 1);
+    }
+    return out;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return typeof value;
+  return "unknown";
+}
 
 async function fetchNewRows(
   client: import("pg").PoolClient,
@@ -49,14 +78,15 @@ async function fetchNewRows(
   source: FeedRow["source"],
   afterSequence: number
 ): Promise<{ rows: FeedRow[]; maxSequence: number }> {
-  const result = await client.query<{ sequence: string; event_type: string; occurred_at: string }>(
-    `select sequence, event_type, occurred_at from tandem.${table}
+  const result = await client.query<{ sequence: string; event_type: string; occurred_at: string; payload: unknown }>(
+    `select sequence, event_type, occurred_at, payload from tandem.${table}
      where workspace_id = $1 and sequence > $2
      order by sequence limit 20`,
     [WORKSPACE_ID, afterSequence]
   );
   const rows = result.rows.map((r) => ({
     source, sequence: Number(r.sequence), type: r.event_type, occurredAt: new Date(r.occurred_at).toISOString(),
+    shape: shapeOf(r.payload),
   }));
   const maxSequence = rows.length > 0 ? rows[rows.length - 1].sequence : afterSequence;
   return { rows, maxSequence };
@@ -132,8 +162,8 @@ export async function GET(request: Request) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      // Read-only, non-secret event metadata (type + timestamp, no
-      // payload), for one fixed public demo workspace -- safe to serve
+      // Read-only event metadata (type, timestamp, and the payload's shape:
+      // key names and value types, never values), for one fixed public demo workspace -- safe to serve
       // cross-origin so tandem-site's embed page can subscribe directly.
       "Access-Control-Allow-Origin": "*",
     },
