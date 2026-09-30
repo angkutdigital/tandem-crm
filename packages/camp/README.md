@@ -10,7 +10,7 @@ checked against a real Postgres, including a real Stripe round trip through
 the payout adapter. See "Migration status" below for the details.
 
 Full setup instructions are in the
-docs: https://tandem-site-84g.pages.dev/guides/camp-admin-ui/
+docs: https://tandemcrm.dev/guides/camp-admin-ui/
 
 ## Quickstart
 
