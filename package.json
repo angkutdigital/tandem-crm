@@ -10,7 +10,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tandem-crm": "./bin/tandem-crm.mjs"
+    "tandem-crm": "bin/tandem-crm.mjs"
   },
   "exports": {
     ".": {
@@ -40,7 +40,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/angkutdigital/tandem-crm"
+    "url": "git+https://github.com/angkutdigital/tandem-crm.git"
   },
   "keywords": [
     "postgres",
