@@ -12,6 +12,14 @@ for the current state).
 
 ### Added
 
+- `tandem-camp/styles.css`: one stylesheet a host imports after Tailwind
+  (`@import "tandem-camp/styles.css";`). Without it, Camp rendered with no
+  layout in any app other than this repo's own dashboard, because Tailwind
+  skips `node_modules` and the dashboard only looked right by sharing class
+  names with Camp. The stylesheet scans Camp's compiled components, defines
+  the data-attribute variants they use, and sets default colors scoped to a
+  `.tandem-camp` class, so it stays readable whatever theme the host already
+  has. Found by installing the packed tarballs into a fresh Next.js app.
 - `tandem-camp`: the installable admin package (`packages/camp`) now has
   every planned screen migrated from the reference dashboard and
   live-verified against real Postgres -- Overview (manager and per-agent

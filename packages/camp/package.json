@@ -10,11 +10,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./styles.css": {
+      "style": "./styles.css",
+      "default": "./styles.css"
     }
   },
   "sideEffects": false,
   "files": [
     "dist",
+    "styles.css",
     "README.md"
   ],
   "scripts": {

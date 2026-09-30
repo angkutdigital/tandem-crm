@@ -147,7 +147,7 @@ export async function CampRootPage({
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="tandem-camp flex min-h-screen flex-col bg-background text-foreground">
       <CampNav basePath={basePath} activeSegment={section ?? ""} />
       {view}
       <Toaster />

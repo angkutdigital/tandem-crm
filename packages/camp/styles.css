@@ -1,0 +1,144 @@
+/*
+ * tandem-camp styles. Import this once, right after Tailwind:
+ *
+ *   @import "tailwindcss";
+ *   @import "tandem-camp/styles.css";
+ *
+ * What it does:
+ *   1. Tells Tailwind to scan Camp's compiled components for classes.
+ *      Tailwind skips node_modules on its own, so without this line the
+ *      screens render with no layout at all.
+ *   2. Defines the three data-attribute variants Camp's components use.
+ *   3. Maps the design tokens (--background, --primary, ...) to Tailwind
+ *      colors.
+ *   4. Gives those tokens default values, scoped to Camp's own area (the
+ *      .tandem-camp class on its wrapper, dialogs and menus). Scoping keeps
+ *      Camp looking consistent whatever theme your app already has, so a
+ *      half-defined --background or --foreground in your :root cannot leave
+ *      it with unreadable text. To restyle Camp, override the same names on
+ *      .tandem-camp in your own CSS, after this import:
+ *
+ *        .tandem-camp { --primary: #2563eb; --primary-foreground: #fff; }
+ *
+ *      Dark mode follows a .dark class on any ancestor, such as <html>.
+ *
+ * Camp also relies on the tw-animate-css package, which installs with it.
+ */
+@import "tw-animate-css";
+
+@source "./dist";
+
+@custom-variant dark (&:is(.dark *));
+
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-heading: var(--font-sans);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:where(.tandem-camp) {
+  --background: #f5f4ef;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: #0a0a0a;
+  --primary-foreground: #ffffff;
+  --secondary: #ebe9e2;
+  --secondary-foreground: #0a0a0a;
+  --muted: #ebe9e2;
+  --muted-foreground: #6b6b6b;
+  --accent: #ebe9e2;
+  --accent-foreground: #0a0a0a;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #d6d3c9;
+  --input: #d6d3c9;
+  --ring: #6b6b6b;
+  --chart-1: #f0d800;
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+}
+
+:where(.dark .tandem-camp, .dark.tandem-camp) {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+}
+
+@layer base {
+  :where(.tandem-camp),
+  :where(.tandem-camp) *,
+  :where(.tandem-camp) ::after,
+  :where(.tandem-camp) ::before {
+    border-color: var(--border);
+  }
+}
