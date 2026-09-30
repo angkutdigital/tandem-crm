@@ -24,11 +24,15 @@ tandem-crm is an embeddable engine that runs inside the integrator's own backend
 - A service-role or superuser Postgres credential is required to apply migrations and manage sessions. Keep that credential server-side only. Never bundle it or pass it to client code.
 - CI includes an automated RLS check at `scripts/ci-rls-check.mjs`, run against a Postgres 16 service container. It applies every migration and asserts cross-tenant isolation holds.
 
-### Known RLS coverage gap
+### What the RLS check covers, and what it does not
 
-The automated RLS check does not yet cover the full schema or the full write path. It currently covers the core tables: events, payouts, leads, and onboarding. It does not yet cover Ramp, routing, or Coaster tables, and it does not exercise the write side where one agent inserts or updates a row that is not theirs.
+The automated check covers every module's tables: core events, payouts, leads and disputes, Ramp onboarding, routing, Trail, and Coaster. It asserts cross-tenant isolation, and it also exercises the write side: what a non-admin agent in the same workspace can and cannot insert or update. For example, an agent cannot insert a payout, rewrite a lead's partner, move a lead's status to a money state, resolve their own dispute, or append a commission event. Each of those assertions was confirmed to fail against the schema before migration 021 tightened it.
 
-Treat those unverified paths accordingly and test them yourself before relying on them. This is an open item, not a hidden bug.
+What it does not do:
+
+- Row-level security decides who may write a row. It does not prove that a projection row matches the event log it was built from. Keeping those in step is the writer's job (validate with the reducer, then write both in one transaction), and a writer that bypasses the reducer can still create a mismatch. Rebuilding a projection from events is the recovery path.
+- Money movement is enforced at the application layer as well as in Postgres: `tandem-camp` and the reference dashboard require an owner or admin to approve or pay a commission, and read the partner, amount and currency from the event log rather than from the request. If you write your own admin actions, do the same.
+- The check runs against the schema this repository ships. If you add tables or grants of your own, they are outside it.
 
 ### Data handling
 

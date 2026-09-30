@@ -675,6 +675,136 @@ async function main() {
   }
   check("a non-admin agent cannot insert a payout_ledger row", agentLedgerInsertBlocked);
 
+  // Migration 021 closed gaps an external pre-launch audit found in 010/011:
+  // agents could insert payouts, rewrite lead money columns, resolve their
+  // own disputes, append commission events, and open disputes against other
+  // leads' payouts. Each assertion below requires Postgres' specific
+  // insufficient_privilege / RLS-violation code (42501), so an unrelated
+  // failure (a NOT NULL, a foreign key) cannot make a test pass by accident.
+  async function blockedByPolicy(run) {
+    try {
+      await run();
+      return false;
+    } catch (error) {
+      return error?.code === "42501";
+    }
+  }
+
+  const leadA2 = randomUUID();
+  const payoutA2 = randomUUID();
+  await pool.query(
+    `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
+     values ($1, $2, 'CI Lead A2', 1, 'Won', $3)`,
+    [leadA2, workspaceA, agentA]
+  );
+
+  const insertPayoutFor = (leadId, payoutId) => (client) =>
+    client.query(
+      `insert into tandem.payouts
+         (id, workspace_id, lead_id, partner_id, amount_minor, currency, hold_days,
+          payment_confirmed_at, release_at, status, last_event_id)
+       values ($1, $2, $3, 'agent-invented-partner', 999999, 'USD', 0, now(), now(), 'paid', $4)`,
+      [payoutId, workspaceA, leadId, payoutEventA]
+    );
+  // The attack uses its own lead so it cannot collide with the admin's
+  // legitimate insert if the policy ever regresses and lets it through.
+  const leadA3 = randomUUID();
+  await pool.query(
+    `insert into tandem.leads (id, workspace_id, company_name, qualification_metric, pipeline_status, assignee_id)
+     values ($1, $2, 'CI Lead A3', 1, 'Won', $3)`,
+    [leadA3, workspaceA, agentA]
+  );
+  check(
+    "an agent cannot insert a payout with their own amount, partner, and status",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertPayoutFor(leadA3, randomUUID())))
+  );
+  const adminPayoutInsert = await withTandemSession(pool, userA, insertPayoutFor(leadA2, payoutA2));
+  check("the same payout insert succeeds for a workspace admin", adminPayoutInsert.rowCount === 1);
+
+  check(
+    "an agent cannot rewrite a lead's partner_id",
+    await blockedByPolicy(() =>
+      withTandemSession(pool, agentUserA, (client) =>
+        client.query("update tandem.leads set partner_id = 'agent-invented-partner' where id = $1", [leadA])
+      )
+    )
+  );
+  check(
+    "an agent cannot jump their lead's pipeline_status to Commission_Eligible",
+    await blockedByPolicy(() =>
+      withTandemSession(pool, agentUserA, (client) =>
+        client.query("update tandem.leads set pipeline_status = 'Commission_Eligible' where id = $1", [leadA])
+      )
+    )
+  );
+  const leadStatusAfterAttack = await pool.query("select pipeline_status, partner_id from tandem.leads where id = $1", [leadA]);
+  check(
+    "the lead's status and partner are unchanged after the agent's blocked updates",
+    leadStatusAfterAttack.rows[0].pipeline_status === "Won" && leadStatusAfterAttack.rows[0].partner_id === null
+  );
+  const agentStageUpdate = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.leads set sales_stage = 'Contacted', updated_at = now() where id = $1", [leadA])
+  );
+  check("an agent can still update their lead's sales stage (Trail's sync)", agentStageUpdate.rowCount === 1);
+  const agentLostUpdate = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.leads set pipeline_status = 'Lost', updated_at = now() where id = $1", [leadA2])
+  );
+  check("an agent can still move their own lead to Lost", agentLostUpdate.rowCount === 1);
+  const adminEligibleUpdate = await withTandemSession(pool, userA, (client) =>
+    client.query("update tandem.leads set pipeline_status = 'Commission_Eligible', updated_at = now() where id = $1", [leadA2])
+  );
+  check("a workspace admin can still move a lead to Commission_Eligible", adminEligibleUpdate.rowCount === 1);
+
+  const agentResolveProjection = await withTandemSession(pool, agentUserA, (client) =>
+    client.query(
+      "update tandem.disputes set status = 'resolved', outcome = 'upheld', auto_approve_at = now() - interval '1 day' where id = $1",
+      [policyDisputeA]
+    )
+  );
+  check("an agent cannot resolve their own dispute by updating the projection", agentResolveProjection.rowCount === 0);
+  const disputeAfterAttack = await pool.query("select status, outcome from tandem.disputes where id = $1", [policyDisputeA]);
+  check(
+    "the dispute is still unresolved after the agent's blocked update",
+    disputeAfterAttack.rows[0].status !== "resolved" && disputeAfterAttack.rows[0].outcome === null
+  );
+
+  const insertLeadEventAsAgent = (eventType, source, sourceEventId) => (client) =>
+    client.query(
+      `insert into tandem.events
+         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+       values ($1, $2, 'lead', $3, $3, $4, $5, $6, '{}', now())`,
+      [randomUUID(), workspaceA, leadA, source, sourceEventId, eventType]
+    );
+  check(
+    "an agent cannot append commission.approved to their own lead",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertLeadEventAsAgent("commission.approved", "ci", "ci-agent-approve")))
+  );
+  check(
+    "an agent cannot append commission.adjusted to their own lead",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertLeadEventAsAgent("commission.adjusted", "ci", "ci-agent-adjust")))
+  );
+  check(
+    "an agent cannot use the reserved tandem-engine source",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertLeadEventAsAgent("lead.lost", "tandem-engine", "payout:ci:eligible")))
+  );
+  const agentStageEvent = await withTandemSession(pool, agentUserA, insertLeadEventAsAgent("lead.stage_changed", "ci", "ci-agent-stage"));
+  check("an agent can still append lead.stage_changed to their own lead", agentStageEvent.rowCount === 1);
+
+  const openDisputeOn = (leadId, payoutId) => (client) =>
+    client.query(
+      `insert into tandem.disputes
+         (id, workspace_id, lead_id, payout_id, opened_by_agent_id, category,
+          expected_amount_minor, description, opened_at, auto_approve_at)
+       values ($1, $2, $3, $4, $5, 'untracked', null, 'CI cross-lead dispute', now(), now() + interval '30 days')`,
+      [randomUUID(), workspaceA, leadId, payoutId, agentA]
+    );
+  check(
+    "an agent cannot open a dispute against a payout that belongs to a different lead",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, openDisputeOn(leadA, payoutA2)))
+  );
+  const validDispute = await withTandemSession(pool, agentUserA, openDisputeOn(leadA2, payoutA2));
+  check("an agent can still open a dispute on their own lead's own payout", validDispute.rowCount === 1);
+
   await pool.end();
 
   if (failures > 0) {
