@@ -70,8 +70,10 @@ export function NewLeadDialog({ basePath }: { basePath: string }) {
         <DialogHeader>
           <DialogTitle>New lead</DialogTitle>
           <DialogDescription>
-            Qualification metric decides whether the lead is set up
-            automatically or queued for manual review.
+            The qualification metric is one number that says how big this lead
+            is, such as vehicles or seats. At or below your limit (15 by
+            default) the lead is set up automatically. Above it, a person
+            reviews it first.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -116,8 +118,13 @@ export function NewLeadDialog({ basePath }: { basePath: string }) {
               type="number"
               value={form.qualificationMetric}
               onChange={(e) => update("qualificationMetric", e.target.value)}
+              min={0}
+              step={1}
               required
             />
+            <p className="text-xs text-muted-foreground">
+              A whole number, 0 or more. Use 0 to skip manual review.
+            </p>
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="productTag">Product tag</Label>
