@@ -6,7 +6,6 @@ Under the commission ledger is a small CRM: leads, agents, sales activity and le
 
 - **`tandem-crm`** is the engine. Five modules (Terrain, Ascent, Waypoint, Belay, Trail), one runtime dependency (`pg`), no UI.
 - **`tandem-camp`** is an optional admin UI that mounts into your own Next.js app. It has every screen: Overview, Leads (list, board and detail), Agents, Payouts, Earnings, Disputes and Settings. See [packages/camp/README.md](./packages/camp/README.md).
-- **Live demo:** [tandem-crm-demo.vercel.app](https://tandem-crm-demo.vercel.app), shown next to a live event feed on the [demo page](https://tandem-site-84g.pages.dev/demo/). It is public and resets every Monday.
 
 You need a Postgres 14+ database before you start. Then:
 
