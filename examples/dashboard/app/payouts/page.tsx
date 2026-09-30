@@ -101,13 +101,7 @@ export default async function PayoutsPage() {
                           <ApprovePayoutButton leadId={payout.leadId} payoutId={payout.id} />
                         ) : null}
                         {payout.status === "approved" ? (
-                          <PayPayoutButton
-                            leadId={payout.leadId}
-                            payoutId={payout.id}
-                            partnerId={payout.partnerId}
-                            amountMinor={payout.amountMinor}
-                            currency={payout.currency}
-                          />
+                          <PayPayoutButton leadId={payout.leadId} payoutId={payout.id} />
                         ) : null}
                       </TableCell>
                     ) : null}

@@ -115,80 +115,133 @@ async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): 
   })) as TandemEvent[];
 }
 
-/** Appends one new event to a lead's history, validated by replaying the
- * full history (existing + new) through the same reducer the engine ships,
- * then writes the event and the resulting projection row in one
- * transaction -- the "validate and append in one transaction" contract the
- * root README describes for a projection writer. */
+type CampMember = { userId: string; role: "owner" | "admin" | "agent" };
+
+function isWorkspaceManager(member: { role: "owner" | "admin" | "agent" }): boolean {
+  return member.role === "owner" || member.role === "admin";
+}
+
+/** Approving, paying, adjusting, reinstating or clawing back a commission
+ * is an operator decision, never an agent's on their own lead. This is
+ * enforced here as well as in the database (migration 021) so a caller
+ * gets a clear error instead of relying on a silent RLS filter. */
+function requireCommissionManager(member: { role: "owner" | "admin" | "agent" }): void {
+  if (!isWorkspaceManager(member)) {
+    throw new Error("only a workspace owner or admin can approve, pay, or change a commission");
+  }
+}
+
+/** Appends one new event to a lead's history inside an already-open
+ * transaction: validated by replaying the full history (existing + new)
+ * through the same reducer the engine ships, then writing the event and the
+ * resulting projection rows together -- the "validate and append in one
+ * transaction" contract the root README describes for a projection writer.
+ *
+ * The lead row is locked first, so two concurrent appends to the same lead
+ * (say a double-clicked kanban drop) run one after the other instead of both
+ * validating against the same history and both inserting a duplicate
+ * transition, which would make the append-only log fail replay forever.
+ *
+ * Every projection UPDATE has its row count checked. An UPDATE that Row
+ * Level Security filters out reports success with zero rows, which would
+ * otherwise leave the event log and the projection silently disagreeing. */
+async function appendLeadEventInTx(
+  client: import("pg").PoolClient,
+  member: CampMember,
+  leadId: string,
+  type: TandemEvent["type"],
+  data: TandemEvent["data"],
+  idempotency?: { source: string; sourceEventId: string }
+): Promise<void> {
+  const { workspaceId } = getTandemCampConfig();
+  if (type.startsWith("commission.") || type.startsWith("payment.")) requireCommissionManager(member);
+
+  const locked = await client.query(
+    "select 1 from tandem.leads where id = $1 and workspace_id = $2 for update",
+    [leadId, workspaceId]
+  );
+  if (locked.rowCount !== 1) throw new Error("lead not found");
+
+  const existing = await loadLeadEvents(client, leadId);
+  const nextSequence = existing.length > 0 ? existing[existing.length - 1].sequence + 1 : 1;
+  const newEvent = {
+    id: randomUUID(), sequence: nextSequence, workspaceId, leadId,
+    source: idempotency?.source ?? "camp",
+    sourceEventId: idempotency?.sourceEventId ?? `camp-${randomUUID()}`,
+    occurredAt: new Date().toISOString(), type, data,
+  } as TandemEvent;
+
+  const previous = existing.length > 0 ? replayLeadEvents(existing, workspaceId, leadId) : null;
+  const state = replayLeadEvents([...existing, newEvent], workspaceId, leadId);
+  if (!state) throw new Error("lead has no state after append");
+  const commissionChanged = JSON.stringify(previous?.commission ?? null) !== JSON.stringify(state.commission ?? null);
+  if (commissionChanged) requireCommissionManager(member);
+
+  // The database assigns the real sequence (one identity column shared by
+  // every workspace), so read it back rather than storing the reducer's
+  // locally computed guess in last_event_sequence.
+  const inserted = await client.query<{ sequence: string }>(
+    `insert into tandem.events
+       (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+     values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)
+     returning sequence`,
+    [newEvent.id, workspaceId, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
+  );
+  const actualSequence = Number(inserted.rows[0].sequence);
+
+  const leadUpdate = await client.query(
+    `update tandem.leads
+     set pipeline_status = $2, sales_stage = $3, assignee_id = coalesce($4, assignee_id), territory_id = coalesce($5, territory_id),
+         last_event_sequence = $6, updated_at = now()
+     where id = $1 and workspace_id = $7`,
+    [leadId, state.status, state.salesStage, state.agentId, state.territoryId, actualSequence, workspaceId]
+  );
+  if (leadUpdate.rowCount !== 1) throw new Error("the lead projection was not updated; this account may not modify that lead");
+
+  if (state.commission && commissionChanged) {
+    // A payout is a rebuildable projection, just like a lead: the event
+    // just appended is the source of truth, and every field the reducer
+    // may have changed (not just status -- commission.adjusted changes
+    // amountMinor, commission.reinstated changes releaseAt, a clawback
+    // sets three more columns) must be synced in this same transaction,
+    // or a view reading tandem.payouts can show a stale amount/status
+    // right after an action claims it was applied.
+    const clawback = state.commission.clawback;
+    const payoutUpdate = await client.query(
+      `update tandem.payouts
+       set amount_minor = $3,
+           release_at = $4,
+           status = $5,
+           last_event_id = $6,
+           approved_at = case when $5 = 'approved' then coalesce(approved_at, now()) else approved_at end,
+           paid_at = case when $5 = 'paid' then coalesce(paid_at, now()) else paid_at end,
+           voided_at = case when $5 = 'voided' then coalesce(voided_at, now()) else voided_at end,
+           clawback_amount_minor = $7,
+           clawback_reason = $8,
+           clawback_requested_at = $9,
+           updated_at = now()
+       where id = $1 and workspace_id = $2`,
+      [
+        state.commission.payoutId, workspaceId, state.commission.amountMinor,
+        state.commission.releaseAt, state.commission.status, newEvent.id,
+        clawback?.amountMinor ?? null, clawback?.reason ?? null, clawback?.requestedAt ?? null,
+      ]
+    );
+    if (payoutUpdate.rowCount !== 1) throw new Error("the payout projection was not updated; the payout row is missing or this account may not change it");
+  }
+}
+
 async function appendLeadEvent(
   leadId: string,
   type: TandemEvent["type"],
   data: TandemEvent["data"],
   idempotency?: { source: string; sourceEventId: string }
 ): Promise<void> {
-  const { pool, workspaceId } = getTandemCampConfig();
+  const { pool } = getTandemCampConfig();
   const member = await requireCurrentMember();
-  await withTandemSession(pool, member.userId, async (client) => {
-    const existing = await loadLeadEvents(client, leadId);
-    const nextSequence = existing.length > 0 ? existing[existing.length - 1].sequence + 1 : 1;
-    const newEvent = {
-      id: randomUUID(), sequence: nextSequence, workspaceId, leadId,
-      source: idempotency?.source ?? "camp",
-      sourceEventId: idempotency?.sourceEventId ?? `camp-${randomUUID()}`,
-      occurredAt: new Date().toISOString(), type, data,
-    } as TandemEvent;
-
-    const state = replayLeadEvents([...existing, newEvent], workspaceId, leadId);
-    if (!state) throw new Error("lead has no state after append");
-
-    await client.query(
-      `insert into tandem.events
-         (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
-       values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
-      [newEvent.id, workspaceId, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
-    );
-    await client.query(
-      `update tandem.leads
-       set pipeline_status = $2, sales_stage = $3, assignee_id = coalesce($4, assignee_id), territory_id = coalesce($5, territory_id),
-           last_event_sequence = $6, updated_at = now()
-       where id = $1 and workspace_id = $7`,
-      [leadId, state.status, state.salesStage, state.agentId, state.territoryId, state.lastSequence, workspaceId]
-    );
-
-    if (state.commission) {
-      // A payout is a rebuildable projection, just like a lead: the event
-      // just appended is the source of truth, and every field the reducer
-      // may have changed (not just status -- commission.adjusted changes
-      // amountMinor, commission.reinstated changes releaseAt, a clawback
-      // sets three more columns) must be synced in this same transaction,
-      // or a view reading tandem.payouts can show a stale amount/status
-      // right after an action claims it was applied. This bit an early
-      // version of this function: it only synced `status`, so
-      // commission.adjusted's new amount silently never reached the
-      // payouts table even though the Core event was correctly recorded.
-      const clawback = state.commission.clawback;
-      await client.query(
-        `update tandem.payouts
-         set amount_minor = $3,
-             release_at = $4,
-             status = $5,
-             last_event_id = $6,
-             approved_at = case when $5 = 'approved' then coalesce(approved_at, now()) else approved_at end,
-             paid_at = case when $5 = 'paid' then coalesce(paid_at, now()) else paid_at end,
-             voided_at = case when $5 = 'voided' then coalesce(voided_at, now()) else voided_at end,
-             clawback_amount_minor = $7,
-             clawback_reason = $8,
-             clawback_requested_at = $9,
-             updated_at = now()
-         where id = $1 and workspace_id = $2`,
-        [
-          state.commission.payoutId, workspaceId, state.commission.amountMinor,
-          state.commission.releaseAt, state.commission.status, newEvent.id,
-          clawback?.amountMinor ?? null, clawback?.reason ?? null, clawback?.requestedAt ?? null,
-        ]
-      );
-    }
-  });
+  await withTandemSession(pool, member.userId, (client) =>
+    appendLeadEventInTx(client, member, leadId, type, data, idempotency)
+  );
   revalidatePath("/tandem-camp/payouts");
   revalidatePath("/tandem-camp/disputes");
 }
@@ -228,23 +281,52 @@ export async function approveCommission(leadId: string, payoutId: string): Promi
 }
 
 /** Executes the real transfer through the configured TandemPayoutAdapter,
- * then records commission.paid with the reference it returns. Deliberately
- * two separate steps, not one transaction spanning the network call: if
- * the transfer throws, nothing is appended and the payout stays
- * "approved" -- exactly the retryable state it needs to be in. */
-export async function payCommission(
-  leadId: string,
-  payoutId: string,
-  partnerId: string,
-  amountMinor: number,
-  currency: string
-): Promise<void> {
-  const { payoutAdapter } = getTandemCampConfig();
+ * then records commission.paid with the reference it returns.
+ *
+ * Nothing about the transfer comes from the caller. The partner, amount and
+ * currency are read from the lead's own event history (the source of truth),
+ * because a server action is a public endpoint: anything the browser sends
+ * can be forged. The caller must be an owner or admin, the commission must
+ * belong to this lead, and it must be exactly "approved".
+ *
+ * The lead row stays locked from the status check until commission.paid is
+ * recorded, so a double-click or two operators paying the same payout
+ * cannot both pass the check. If the transfer throws, nothing is appended
+ * and the payout stays "approved", the retryable state the adapter's own
+ * idempotency key (derived from payoutId) needs. The tradeoff is a database
+ * connection held for the duration of the transfer call. */
+export async function payCommission(leadId: string, payoutId: string): Promise<void> {
+  const { pool, workspaceId, payoutAdapter } = getTandemCampConfig();
   if (!payoutAdapter) {
     throw new Error("tandem-camp: no payoutAdapter configured -- see the README's Adapter pattern section.");
   }
-  const { payoutReference } = await payoutAdapter.executePayout({ payoutId, partnerId, amountMinor, currency });
-  await appendLeadEvent(leadId, "commission.paid", { payoutId, payoutReference });
+  const member = await requireCurrentMember();
+  requireCommissionManager(member);
+
+  await withTandemSession(pool, member.userId, async (client) => {
+    const locked = await client.query(
+      "select 1 from tandem.leads where id = $1 and workspace_id = $2 for update",
+      [leadId, workspaceId]
+    );
+    if (locked.rowCount !== 1) throw new Error("lead not found");
+
+    const state = replayLeadEvents(await loadLeadEvents(client, leadId), workspaceId, leadId);
+    const commission = state?.commission;
+    if (!commission || commission.payoutId !== payoutId) throw new Error("that payout does not belong to this lead");
+    if (commission.status !== "approved") {
+      throw new Error(`this commission is ${commission.status}; only an approved commission can be paid`);
+    }
+
+    const { payoutReference } = await payoutAdapter.executePayout({
+      payoutId,
+      partnerId: commission.partnerId,
+      amountMinor: commission.amountMinor,
+      currency: commission.currency,
+    });
+    await appendLeadEventInTx(client, member, leadId, "commission.paid", { payoutId, payoutReference });
+  });
+  revalidatePath("/tandem-camp/payouts");
+  revalidatePath("/tandem-camp/disputes");
 }
 
 async function loadDisputeEvents(client: import("pg").PoolClient, disputeId: string): Promise<import("tandem-crm").DisputeEvent[]> {
@@ -272,6 +354,7 @@ async function appendDisputeEvent(
   const { pool, workspaceId } = getTandemCampConfig();
   const { replayDisputeEvents } = await import("tandem-crm");
   const member = await requireCurrentMember();
+  if (type !== "dispute.opened") requireCommissionManager(member);
   await withTandemSession(pool, member.userId, async (client) => {
     const existing = await loadDisputeEvents(client, disputeId);
     if (existing.length === 0) throw new Error("dispute not found");
@@ -329,6 +412,7 @@ export async function executeDisputeOutcome(
 ): Promise<void> {
   const { pool, workspaceId } = getTandemCampConfig();
   const member = await requireCurrentMember();
+  requireCommissionManager(member);
   const idempotency = {
     source: "belay-dispute",
     sourceEventId: `dispute:${disputeId}:outcome`,
@@ -491,31 +575,16 @@ export async function assignAgentToTerritory(agentId: string, territoryId: strin
  * already-open client (unlike the top-of-file appendLeadEvent, which
  * opens its own session) so this can share one transaction with the
  * trail_events/trail_entries write it always accompanies. */
-async function syncLeadSalesStage(client: import("pg").PoolClient, leadId: string, salesStage: TrailSalesStage): Promise<void> {
+async function syncLeadSalesStage(
+  client: import("pg").PoolClient,
+  member: CampMember,
+  leadId: string,
+  salesStage: TrailSalesStage
+): Promise<void> {
   const { workspaceId } = getTandemCampConfig();
-  const leadEvents = await loadLeadEvents(client, leadId);
-  const leadState = replayLeadEvents(leadEvents, workspaceId, leadId);
+  const leadState = replayLeadEvents(await loadLeadEvents(client, leadId), workspaceId, leadId);
   if (!leadState || leadState.salesStage === salesStage) return;
-
-  const nextSequence = leadEvents.length > 0 ? leadEvents[leadEvents.length - 1].sequence + 1 : 1;
-  const newEvent = {
-    id: randomUUID(), sequence: nextSequence, workspaceId, leadId,
-    source: "camp", sourceEventId: `camp-${randomUUID()}`, occurredAt: new Date().toISOString(),
-    type: "lead.stage_changed", data: { salesStage },
-  } as TandemEvent;
-  const state = replayLeadEvents([...leadEvents, newEvent], workspaceId, leadId);
-  if (!state) throw new Error("lead has no state after stage sync");
-
-  await client.query(
-    `insert into tandem.events
-       (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
-     values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)`,
-    [newEvent.id, workspaceId, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
-  );
-  await client.query(
-    `update tandem.leads set sales_stage = $2, last_event_sequence = $3, updated_at = now() where id = $1 and workspace_id = $4`,
-    [leadId, state.salesStage, state.lastSequence, workspaceId]
-  );
+  await appendLeadEventInTx(client, member, leadId, "lead.stage_changed", { salesStage });
 }
 
 export type TrailInput = {
@@ -574,7 +643,7 @@ export async function logTrailVisit(leadId: string, input: TrailInput): Promise<
       [entryId, workspaceId, leadId, state.channel, state.confidenceRating, state.salesStage, state.note,
         state.challenges, state.authority, state.budget, state.prioritization, state.loggedAt, state.lastSequence]
     );
-    await syncLeadSalesStage(client, leadId, state.salesStage);
+    await syncLeadSalesStage(client, member, leadId, state.salesStage);
   });
   revalidatePath(`/tandem-camp/leads/${leadId}`);
 }
@@ -632,7 +701,7 @@ async function appendTrailEvent(
         state.challenges, state.authority, state.budget, state.prioritization,
         state.correctedAt, state.retracted, state.lastSequence, workspaceId, leadId]
     );
-    if (!state.retracted) await syncLeadSalesStage(client, leadId, state.salesStage);
+    if (!state.retracted) await syncLeadSalesStage(client, member, leadId, state.salesStage);
   });
   revalidatePath(`/tandem-camp/leads/${leadId}`);
 }

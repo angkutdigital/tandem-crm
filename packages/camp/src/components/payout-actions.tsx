@@ -33,15 +33,15 @@ export function ApprovePayoutButton({ leadId, payoutId }: { leadId: string; payo
   );
 }
 
-export function PayPayoutButton({
-  leadId, payoutId, partnerId, amountMinor, currency,
-}: { leadId: string; payoutId: string; partnerId: string; amountMinor: number; currency: string }) {
+/** Only ids cross the wire: the server reads the partner, amount and
+ * currency from the lead's own event history, never from the browser. */
+export function PayPayoutButton({ leadId, payoutId }: { leadId: string; payoutId: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   function handleClick() {
     startTransition(async () => {
       try {
-        await payCommission(leadId, payoutId, partnerId, amountMinor, currency);
+        await payCommission(leadId, payoutId);
         router.refresh();
       } catch (err) {
         toast.error(errorMessage(err, "Could not pay this commission"));

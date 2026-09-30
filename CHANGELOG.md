@@ -83,3 +83,29 @@ for the current state).
 - Migrations 005/006 depended on Supabase-only assumptions (`auth.users`,
   `auth.uid()`, a pre-existing `authenticated` role) that silently broke
   row-level security on any non-Supabase host. Fixed in migration 007.
+
+An independent pre-release audit found the following, all fixed before the first publish:
+
+- Camp and the reference dashboard trusted the browser for money movement.
+  `payCommission` sent whatever partner, amount and currency the caller
+  supplied, before checking who was calling or what state the payout was in,
+  and two simultaneous calls could pay the same payout twice. It now requires
+  an owner or admin, locks the lead, requires the commission to be exactly
+  "approved", and reads the partner, amount and currency from the event log.
+- Approving, adjusting or clawing back a commission had no role check; an
+  agent could record their own payout approval in the event log. All
+  commission and dispute-operator actions now require an owner or admin.
+- Row-level security was broader than its comments claimed (migration 021):
+  an agent could insert a payout with any amount, rewrite a lead's partner or
+  jump its status to a money state, resolve their own dispute, append commission
+  events, claim the reserved `tandem-engine` event source (which could make the
+  scheduled release job fail for every workspace), or open a dispute against
+  another lead's payout. Each is now blocked, with a regression assertion in
+  the RLS suite.
+- Concurrent appends to one lead could both pass validation and write a
+  duplicate transition, leaving a history that can never be replayed again.
+  Appends now lock the lead row first. `last_event_sequence` is also now the
+  real database sequence rather than a locally computed guess, and every
+  projection update checks its row count so a filtered update fails loudly
+  instead of silently disagreeing with the log.
+- `tandem-camp` now ships its `LICENSE`.
