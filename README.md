@@ -1,10 +1,20 @@
 # Tandem CRM
 
-An embeddable, event-sourced CRM engine for Postgres: leads, agents, sales-cycle activity, partner commissions, and dispute handling, all as typed append-only facts. Install it directly into your own Next.js (or any Node) app. No separate service to run, no vendor lock-in.
+Partner commissions with holds, approvals, disputes and a replayable audit trail, stored in your own Postgres. It is a library you install into your app, not a service that takes a cut.
 
-**What "embeddable" means in practice:** `tandem-crm` (this package) is the engine — five modules (Terrain, Ascent, Waypoint, Belay, Trail), one runtime dependency (`pg`), no UI. A separate, installable admin package, `tandem-camp` (partially migrated — see [packages/camp/README.md](./packages/camp/README.md) for exactly which screens), mounts a real CRM interface into your own Next.js app the way `@payloadcms/next` or `tinacms` do, rather than handing you an example repo to fork: Overview, Leads, Payouts (including real Approve/Pay actions), Disputes (including dispute-outcome execution), and Agents (including real onboarding/territory actions) are live and verified against real Postgres today; the rest of what `examples/dashboard` demonstrates — Earnings, Settings, lead detail/Trail, the kanban board — has not moved into `tandem-camp` yet and still only exists as reference example code. A live public demo of the reference dashboard runs at [tandem-crm-demo.vercel.app](https://tandem-crm-demo.vercel.app), embedded with a real-time event feed at [tandem-site's `/demo` page](https://tandem-site-84g.pages.dev/demo).
+Under the commission ledger is a small CRM: leads, agents, sales activity and lead routing. Everything is recorded as typed, append-only events, and current state is rebuilt from them. Row-level security keeps each workspace's data separate in the database itself.
 
-**Status:** in production use today, powering a real partner login and commission-tracking flow for the project this was originally built inside of. RLS-backed multi-tenant isolation is live-tested against real accounts, not just unit tests. The domain package itself is vendor-neutral (see "Adapter pattern" below). The Supabase Auth adapter is proven in production; identity resolution and RLS are also verified against a plain, non-Supabase Postgres 16 instance, so implementing `TandemAuthAdapter` against Neon, RDS, Clerk, BetterAuth, or your own session table needs no changes to the package itself. See [CHANGELOG.md](./CHANGELOG.md) for what shipped when.
+- **`tandem-crm`** is the engine. Five modules (Terrain, Ascent, Waypoint, Belay, Trail), one runtime dependency (`pg`), no UI.
+- **`tandem-camp`** is an optional admin UI that mounts into your own Next.js app. It has every screen: Overview, Leads (list, board and detail), Agents, Payouts, Earnings, Disputes and Settings. See [packages/camp/README.md](./packages/camp/README.md).
+- **Live demo:** [tandem-crm-demo.vercel.app](https://tandem-crm-demo.vercel.app), shown next to a live event feed on the [demo page](https://tandem-site-84g.pages.dev/demo/). It is public and resets every Monday.
+
+You need a Postgres 14+ database before you start. Then:
+
+```sh
+npx tandem-crm init --database-url "$DATABASE_URL" --sample-data
+```
+
+**Status:** pre-1.0. It runs in production behind a real partner login and commission flow, and isolation between workspaces is tested against real Postgres on every push. Auth is vendor-neutral: implement `TandemAuthAdapter` for Supabase, Clerk, BetterAuth or your own sessions. See [CHANGELOG.md](./CHANGELOG.md) for what shipped and [SECURITY.md](./SECURITY.md) for what the tests do and do not cover.
 
 ## Terrain: what the package does
 
@@ -117,7 +127,7 @@ export type TandemPayoutAdapter = {
 };
 ```
 
-A reference implementation against Stripe Connect lives outside the core package at `examples/dashboard/lib/stripePayoutAdapter.ts` (the core package itself has zero dependency on the `stripe` SDK, same reasoning as the auth adapter). A host calls `adapter.executePayout(...)` from their own approve/pay action, and only appends `commission.paid` with the returned reference once that call succeeds — if it throws, nothing is recorded and the payout stays `approved`, safely retryable. The reference dashboard's Payouts page demonstrates the full flow: an owner/admin approves an eligible payout (`commission.approved`), then pays it (`commission.paid`, via the configured adapter).
+A reference implementation against Stripe Connect lives outside the core package at `examples/dashboard/lib/stripePayoutAdapter.ts` (the core package itself has zero dependency on the `stripe` SDK, same reasoning as the auth adapter). A host calls `adapter.executePayout(...)` from their own approve/pay action, and only appends `commission.paid` with the returned reference once that call succeeds, if it throws, nothing is recorded and the payout stays `approved`, safely retryable. The reference dashboard's Payouts page demonstrates the full flow: an owner/admin approves an eligible payout (`commission.approved`), then pays it (`commission.paid`, via the configured adapter).
 
 ## Setup verification (`doctor.ts`)
 
@@ -145,31 +155,25 @@ Dispute events live in their own append-only log, `tandem.dispute_events`, for t
 
 The one place Belay changes Terrain's own behavior: `release_due_commissions()` now skips a payout with an open or queried dispute, even past its release date. Everywhere else, Belay only reads Terrain's leads and payouts.
 
-Executing an upheld dispute's outcome is a separate, explicit step from resolving it: three Terrain event types exist for a host to append after reading a resolved dispute's category and outcome — `commission.adjusted` (correct an unpaid commission's amount), `commission.reinstated` (bring a `voided` commission back to `held` with a fresh amount/release date), and `commission.clawback_requested` (record money owed back on an already-paid commission, without Tandem reversing the payment itself — it never touches money). Belay still never appends these on its own; the host decides.
+Executing an upheld dispute's outcome is a separate, explicit step from resolving it: three Terrain event types exist for a host to append after reading a resolved dispute's category and outcome, `commission.adjusted` (correct an unpaid commission's amount), `commission.reinstated` (bring a `voided` commission back to `held` with a fresh amount/release date), and `commission.clawback_requested` (record money owed back on an already-paid commission, without Tandem reversing the payment itself, it never touches money). Belay still never appends these on its own; the host decides.
 
 ## Trail: lightweight sales activity
 
-Trail is a per-lead activity log — the minimum a sales cycle actually needs, kept deliberately free-text-first rather than a full CRM object model. An agent logs a visit report (`phone`, `physical`, or `email`), a 1–10 confidence rating, a sales stage, and a note; entries can be corrected or retracted without deleting history (both show as `corrected`/`retracted`, never silently gone).
+Trail is a per-lead activity log: the minimum a sales cycle actually needs, kept deliberately free-text-first rather than a full CRM object model. An agent logs a visit report (`phone`, `physical`, `email` or `whatsapp`), a 1–10 confidence rating, a sales stage, and a note; entries can be corrected or retracted without deleting history (both show as `corrected`/`retracted`, never silently gone).
 
 Trail events live in their own append-only log, `tandem.trail_events`, projected into `tandem.trail_entries`, same pattern as Ascent and Belay. `replayTrailEntries()` folds a lead's whole activity stream into one entry per id, oldest first. Tandem never reads or acts on Trail data itself; it's purely something an agent records and an owner/admin reviews.
 
-Sales stage (`New` → `Contacted` → `Qualified` → `Negotiating` → `Closed_Won`/`Closed_Lost`) is a first-class field on `LeadState` (`domain.ts`'s `leadSalesStages`/`lead.stage_changed`), a separate axis from `TandemLeadStatus`'s commission pipeline (`Automated_Setup` → `Won` → `Commission_Paid`). A lead can be `Commission_Paid` with sales stage still `Closed_Won`, or `Negotiating` with no commission event yet — the two don't gate each other. Trail's own `salesStage` field on a visit-report entry is unchanged (`trailSalesStages`/`TrailSalesStage` are now aliases of the domain.ts versions); the reference dashboard keeps the lead's promoted field in sync with whatever an agent logs in Trail, in the same transaction as the Trail write.
+Sales stage (`New` → `Contacted` → `Qualified` → `Negotiating` → `Closed_Won`/`Closed_Lost`) is a first-class field on `LeadState` (`domain.ts`'s `leadSalesStages`/`lead.stage_changed`), a separate axis from `TandemLeadStatus`'s commission pipeline (`Automated_Setup` → `Won` → `Commission_Paid`). A lead can be `Commission_Paid` with sales stage still `Closed_Won`, or `Negotiating` with no commission event yet, the two don't gate each other. Trail's own `salesStage` field on a visit-report entry is unchanged (`trailSalesStages`/`TrailSalesStage` are now aliases of the domain.ts versions); the reference dashboard keeps the lead's promoted field in sync with whatever an agent logs in Trail, in the same transaction as the Trail write.
 
-**Deliberately out of scope for now:** tasks/follow-up reminders, a deal value distinct from commission math, and multiple contacts per lead — real CRM features, each larger than a Trail tweak, planned for their own release rather than squeezed in here.
-
-## Where this is going
-
-Tandem's target shape is a real embeddable CRM: leads, agents, sales-cycle activity, partner commissions, and disputes as one product, installed the way Payload or Tina install — not a commission engine with a CRM label loosely attached. Concretely, still ahead:
-
-- **Finishing Camp's migration.** The mount contract itself (`mountTandemCamp`, `CampRootPage`, the config-singleton pattern) is done and live-verified — see [packages/camp/README.md](./packages/camp/README.md)'s "Migration status" for exactly which screens (Overview, Leads, Payouts) have moved from `examples/dashboard` into `tandem-camp` and which (Agents, Disputes, Earnings, Settings, lead detail/Trail, the kanban board) haven't. Kept as a separate package deliberately: a host who only wants the engine should never pay for the admin's chart/data-grid/drag-and-drop dependencies. Measured directly (real `npm install` + `du -sh`, not estimates): the whole `tandem-crm` engine plus its one dependency (`pg`) is about 1 MB; a realistic Payload install is ~433 MB beyond a bare Next.js app, and a realistic Tina install is ~650 MB beyond the same baseline. The engine was never going to be the weight problem — keeping Camp that light is the actual engineering goal, and neither Payload nor Tina has fully solved it either (Tina's own admin-bundle-size issue is still open upstream).
+**Deliberately out of scope for now:** tasks/follow-up reminders, a deal value distinct from commission math, and multiple contacts per lead, real CRM features, each larger than a Trail tweak, planned for their own release rather than squeezed in here.
 
 ## Open items
 
 - The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers Terrain read/write boundaries, Ascent's template/progress/recertification boundary, Waypoint configuration, Belay dispute visibility/resolution, and Trail activity writes. It uses a disposable real Postgres database, not mocks.
-- No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only. Deliberately deferred — the business rules aren't decided yet, not just unbuilt.
+- No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only. Deliberately deferred, the business rules aren't decided yet, not just unbuilt.
 - Belay can execute an upheld dispute's outcome (see above), but has no scheduled auto-execution and no admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
-- Camp is 5 of roughly 10 reference-dashboard screens migrated — see "Where this is going" above and packages/camp/README.md.
+- The engine has no event writer of its own yet. Locking a lead, replaying its history and updating projections lives in `examples/dashboard/lib/actions.ts` and `packages/camp/src/actions.ts`. A documented `appendLeadEvent` in the package is planned.
 
 ## Local verification
 

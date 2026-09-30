@@ -67,9 +67,13 @@ async function insertLead(client, workspaceId, { id, companyName, qualificationM
  * @param {{ workspaceId?: string, ownerUserId?: string }} [options]
  * @returns {Promise<{ workspaceId: string }>}
  */
+/** Fixed so the reference dashboard, which defaults to this identity in its
+ * demo mode, works right after `tandem-crm init --sample-data`. */
+export const SAMPLE_OWNER_USER_ID = "c0000000-0000-0000-0000-000000000001";
+
 export async function seedSampleWorkspace(pool, options = {}) {
   const workspaceId = options.workspaceId ?? randomUUID();
-  const ownerUserId = options.ownerUserId ?? randomUUID();
+  const ownerUserId = options.ownerUserId ?? SAMPLE_OWNER_USER_ID;
   const agentNorth = randomUUID();
   const agentSouth = randomUUID();
   const territoryNorth = randomUUID();

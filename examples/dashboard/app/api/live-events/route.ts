@@ -4,6 +4,12 @@ import { DEFAULT_DEMO_USER_ID } from "@/lib/demo-users";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Vercel Hobby caps a function at 60s. The stream ends itself just before
+// that and the browser's EventSource reconnects, resuming from Last-Event-ID.
+export const maxDuration = 60;
+
+const POLL_MS = 5000;
+const STREAM_LIFETIME_MS = 55_000;
 
 /**
  * A public, read-only Server-Sent Events feed of this deployment's own
@@ -96,12 +102,25 @@ export async function GET(request: Request) {
   const encoder = new TextEncoder();
   let closed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let lifetime: ReturnType<typeof setTimeout> | undefined;
 
   const cursors = { events: 0, agent_events: 0, dispute_events: 0, trail_events: 0 };
   // Start from "now" (the latest existing sequence per table), not zero --
   // a visitor opening the demo should see what happens next, not replay
   // this workspace's entire history on every page load.
-  await withTandemSession(pool, DEFAULT_DEMO_USER_ID, async (client) => {
+  let resumed = false;
+  try {
+    const last = JSON.parse(request.headers.get("last-event-id") ?? "null");
+    if (last && typeof last === "object") {
+      for (const table of Object.keys(cursors) as (keyof typeof cursors)[]) {
+        if (Number.isSafeInteger(last[table]) && last[table] >= 0) cursors[table] = last[table];
+      }
+      resumed = true;
+    }
+  } catch {
+    // No or malformed Last-Event-ID: start from now.
+  }
+  if (!resumed) await withTandemSession(pool, DEFAULT_DEMO_USER_ID, async (client) => {
     for (const table of ["events", "agent_events", "dispute_events", "trail_events"] as const) {
       const result = await client.query<{ max: string | null }>(
         `select max(sequence) as max from tandem.${table} where workspace_id = $1`,
@@ -114,7 +133,17 @@ export async function GET(request: Request) {
   const stream = new ReadableStream({
     start(controller) {
       function send(row: FeedRow) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(row)}\n\n`));
+        controller.enqueue(encoder.encode(`id: ${JSON.stringify(cursors)}\ndata: ${JSON.stringify(row)}\n\n`));
+      }
+      function stop() {
+        closed = true;
+        if (timer) clearInterval(timer);
+        if (lifetime) clearTimeout(lifetime);
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the client disconnecting; nothing to do.
+        }
       }
       async function poll() {
         if (closed) return;
@@ -133,6 +162,7 @@ export async function GET(request: Request) {
             const all = [...events.rows, ...onboarding.rows, ...disputes.rows, ...trail.rows]
               .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
             for (const row of all) send(row);
+            if (all.length === 0) controller.enqueue(encoder.encode(": keep-alive\n\n"));
           });
         } catch {
           // A transient Postgres/network hiccup should not kill the stream;
@@ -140,20 +170,14 @@ export async function GET(request: Request) {
         }
       }
       controller.enqueue(encoder.encode(": connected\n\n"));
-      timer = setInterval(poll, 1500);
-      request.signal.addEventListener("abort", () => {
-        closed = true;
-        if (timer) clearInterval(timer);
-        try {
-          controller.close();
-        } catch {
-          // Already closed by the client disconnecting; nothing to do.
-        }
-      });
+      timer = setInterval(poll, POLL_MS);
+      lifetime = setTimeout(stop, STREAM_LIFETIME_MS);
+      request.signal.addEventListener("abort", stop);
     },
     cancel() {
       closed = true;
       if (timer) clearInterval(timer);
+      if (lifetime) clearTimeout(lifetime);
     },
   });
 

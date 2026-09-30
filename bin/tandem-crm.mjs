@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { createTandemPool, applyTandemMigrations } from "../dist/db/index.js";
 import { runHealthCheck } from "./lib/healthCheck.mjs";
-import { seedSampleWorkspace } from "./lib/sampleData.mjs";
+import { seedSampleWorkspace, SAMPLE_OWNER_USER_ID } from "./lib/sampleData.mjs";
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -107,6 +107,7 @@ async function main() {
       console.log("\nSeeding a sample workspace...");
       const { workspaceId } = await seedSampleWorkspace(pool);
       console.log(`  done. TANDEM_WORKSPACE_ID=${workspaceId}`);
+      console.log(`  The owner's user id is ${SAMPLE_OWNER_USER_ID}, which the reference dashboard uses by default.`);
     } else if (typeof args["admin-user-id"] === "string") {
       const workspaceId = randomUUID();
       const slug = typeof args["workspace-slug"] === "string" ? args["workspace-slug"] : "default";

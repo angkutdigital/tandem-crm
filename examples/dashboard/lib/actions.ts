@@ -24,6 +24,13 @@ import { setDemoUser } from "./auth";
 import { requireCurrentMember, getOnboardingSteps, getWaypointStrategy } from "./queries";
 import { createStripePayoutAdapter } from "./stripePayoutAdapter";
 
+/** The reference app is often run as a public demo, and neither the forms nor
+ * the database cap text length, so each free-text field is capped here. */
+const MAX_TEXT = 500;
+function capText(value: string | undefined, label: string, max = MAX_TEXT): void {
+  if (value !== undefined && value.length > max) throw new Error(`${label} must be ${max} characters or fewer`);
+}
+
 async function loadLeadEvents(client: import("pg").PoolClient, leadId: string): Promise<TandemEvent[]> {
   const result = await client.query<{
     id: string; sequence: number; event_type: string; payload: Record<string, unknown>; occurred_at: string;
@@ -231,6 +238,7 @@ export async function markLeadWon(leadId: string): Promise<void> {
 
 export async function markLeadLost(leadId: string, reason: string): Promise<void> {
   if (!reason.trim()) throw new Error("a reason is required to mark a lead lost");
+  capText(reason, "reason");
   await appendLeadEvent(leadId, "lead.lost", { reason });
 }
 
@@ -477,6 +485,8 @@ export async function createAgentProfile(input: {
   if (member.role !== "owner" && member.role !== "admin") {
     throw new Error("only a workspace owner or admin can add an agent profile");
   }
+  capText(input.displayName, "display name", 200);
+  capText(input.externalRef, "external reference", 200);
   const displayName = input.displayName.trim();
   const externalRef = input.externalRef?.trim() || null;
   if (!displayName) throw new Error("agent name is required");
@@ -534,6 +544,8 @@ export async function createOnboardingStep(input: {
 export async function createTerritory(input: { name: string; code: string }): Promise<void> {
   const member = await requireCurrentMember();
   requireWorkspaceManager(member);
+  capText(input.name, "territory name", 200);
+  capText(input.code, "territory code", 50);
   const name = input.name.trim();
   const code = input.code.trim().toUpperCase();
   if (!name) throw new Error("territory name is required");
@@ -661,6 +673,11 @@ export async function createLead(input: {
   address?: string;
 }): Promise<string> {
   const member = await requireCurrentMember();
+  capText(input.companyName, "company name", 200);
+  capText(input.contactPhone, "contact phone", 50);
+  capText(input.productTag, "product tag", 100);
+  capText(input.contactName, "contact name", 200);
+  capText(input.address, "address");
   if (!input.companyName.trim()) throw new Error("company name is required");
   if (!input.contactPhone.trim()) throw new Error("contact phone is required");
   if (!input.productTag.trim()) throw new Error("product tag is required");
@@ -759,11 +776,13 @@ async function appendDisputeEvent(
 
 export async function queryDispute(disputeId: string, question: string): Promise<void> {
   if (!question.trim()) throw new Error("a question is required");
+  capText(question, "question");
   await appendDisputeEvent(disputeId, "dispute.queried", { question: question.trim() });
 }
 
 export async function resolveDispute(disputeId: string, outcome: "upheld" | "dismissed", note: string): Promise<void> {
   if (!note.trim()) throw new Error("a resolution note is required");
+  capText(note, "note");
   await appendDisputeEvent(disputeId, "dispute.resolved", { outcome, note: note.trim() });
 }
 
@@ -860,6 +879,9 @@ export type TrailInput = {
 function validateTrailInput(input: TrailInput): void {
   if (!trailVisitChannels.includes(input.channel)) throw new Error("invalid channel");
   if (!trailSalesStages.includes(input.salesStage)) throw new Error("invalid sales stage");
+  for (const [label, value] of [["note", input.note], ["challenges", input.challenges], ["authority", input.authority], ["budget", input.budget], ["prioritization", input.prioritization]] as const) {
+    capText(value, label);
+  }
   if (!Number.isSafeInteger(input.confidenceRating) || input.confidenceRating < 1 || input.confidenceRating > 10) {
     throw new Error("confidence rating must be an integer from 1 to 10");
   }
