@@ -28,5 +28,11 @@ export type TandemPayoutAdapter = {
     partnerId: string;
     amountMinor: number;
     currency: string;
+    /** "house" when the line was routed to the house account. If your house
+     * account is your own business, there is usually nothing to transfer:
+     * record the line some other way or void it instead of paying it. */
+    beneficiary?: "partner" | "house";
+    /** The customer payment this commission was earned on. */
+    paymentId?: string;
   }): Promise<{ payoutReference: string }>;
 };
