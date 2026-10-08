@@ -331,9 +331,14 @@ export async function deactivatePartner(client: PoolClient, input: {
   actor?: TandemActor;
   source?: string;
 }): Promise<{ leadsChanged: number; eventsAppended: number }> {
+  // Every lead this partner referred, from lead.created (the source of
+  // truth), not from payout rows: a payment that commits while this sweep
+  // is running may have created the partner's first line after a payout
+  // query would have run. Each lead is then locked and replayed, so the
+  // sweep sees everything committed before it got the lock.
   const leads = await client.query<{ lead_id: string }>(
-    `select distinct lead_id from tandem.payouts
-     where workspace_id = $1 and partner_id = $2 and beneficiary = 'partner' and status in ('held', 'eligible', 'approved')
+    `select distinct lead_id from tandem.events
+     where workspace_id = $1 and event_type = 'lead.created' and payload->>'partnerId' = $2
      order by lead_id`,
     [input.workspaceId, input.partnerId]
   );

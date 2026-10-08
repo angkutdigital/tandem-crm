@@ -72,6 +72,9 @@ create unique index tandem_payouts_one_line_per_payment
   where payment_id is not null;
 
 create index tandem_payouts_lead_idx on tandem.payouts (workspace_id, lead_id);
+-- deactivatePartner() finds a partner's leads from lead.created.
+create index tandem_events_lead_partner_idx on tandem.events (workspace_id, (payload->>'partnerId'))
+  where event_type = 'lead.created';
 create index tandem_payouts_partner_open_idx on tandem.payouts (workspace_id, partner_id)
   where status in ('held', 'eligible', 'approved');
 
