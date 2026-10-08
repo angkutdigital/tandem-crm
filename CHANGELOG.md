@@ -23,12 +23,24 @@ Lifetime commission. A subscription customer pays every month, and the partner w
 - A writer in `tandem-crm/db`: `appendLeadEvents`, `recordPayment`, `recordRefund`, `deactivatePartner`, plus `loadLeadState`. Camp and the reference dashboard now use it instead of their own copies.
 - Migration 022: commission-line columns on `tandem.payouts`, one line per payment enforced by a unique index, the new event types, and a release job that handles many lines per lead.
 - Camp's Payouts view shows each line's payment, rate, who it is owed to, and any clawback still owed.
+- `lead.partner_attributed` and `attributePartner()`: attach the referring partner to a lead created without one, such as any 0.1 lead (0.1 kept the partner on the commission, not on the lead). Admin-only, once per lead, refused if an existing commission line names a different partner. Camp's New lead form has an optional "Referred by partner" field.
+- `commission.skipped`: when a payment arrives for a lead with no partner, or its commission would round to zero, `recordPayment` records why there is no line instead of writing nothing.
 
 ### Changed
 
 - `LeadState` has `payments` and `commissions` lists. The old `payment` and `commission` fields remain as the most recent of each, for compatibility.
 - A second `commission.clawback_requested` on the same line now adds to the first instead of being rejected.
 - `TandemPayoutAdapter.executePayout` also receives `beneficiary` and `paymentId`.
+- A lead earns commission only if it has a partner. Leads created before this release, and leads created in Camp without "Referred by partner", earn nothing until a partner is attached.
+- Only the release job may release a line. The writer refuses `commission.eligible`, and the database now refuses it, and the "tandem-engine" source, from any authenticated session, admins included. The writer also refuses events stamped more than five minutes in the future.
+- Camp and the reference dashboard refuse to pay a house-account line, and Camp shows it as "House" with no Pay action.
+- `tandem.leads.partner_id` is kept in step by the writer. Only an admin can change it.
+
+### Fixed (found by the pre-release audit)
+
+- The release job could stop for every workspace. Its idempotency key was fixed per line, so a line released, voided and reinstated raised "already has an eligibility event" on its second release, and the whole run failed. The key now names the event that put the line on hold. This key existed in 0.1 too; 0.2's `heldLines: "void"` policy made it easy to reach.
+- An admin could end a hold early by stamping `commission.eligible` with a future time.
+- The 0.1 compatibility test took longer than the default test timeout and now has its own.
 
 ### Compatibility
 

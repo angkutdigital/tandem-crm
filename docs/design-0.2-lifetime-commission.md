@@ -37,6 +37,17 @@ New:
 | `commission.transferred` | `payoutId`, `toPartnerId`, `reason` | An unpaid line moves to the house account. The original line stays in history. An approved line goes back to eligible, because the approval was for a different recipient. |
 | `commission.clawback_recovered` | `payoutId`, `amountMinor`, `reference` | Money the partner owed back has been recovered (deducted or repaid). |
 
+## Partner attribution
+
+Commission is only planned for a lead with a partner (`partnerId` on
+`lead.created`). 0.1 put the partner on `commission.held`, not on the lead,
+and 0.1's Camp never set one. `lead.partner_attributed` attaches the partner
+later: admin-only, once per lead, and refused if any existing line names a
+different original partner. A 0.1 lead whose only line is for that same
+partner can be attributed, which is the upgrade path. A payment on a lead
+with no partner, or whose commission rounds to zero, gets a
+`commission.skipped` event so the missing line is a recorded decision.
+
 ## Rules
 
 **Rate by customer age.** `customerSince` is the time of the lead's first
@@ -137,12 +148,19 @@ Camp and the dashboard now call these instead of their own copies.
   `clawback_recovered_minor`. A unique index on
   `(workspace_id, lead_id, payment_id)` stops a second line for one payment
   even if app code is wrong.
-- `tandem.events`: the three new event types.
+- `tandem.events`: the five new event types.
 - `release_due_commissions()`: a lead can already be `Commission_Eligible`
   from another line, so the lead update accepts `Commission_Hold` or
   `Commission_Eligible`.
-- No change to RLS policies. Agents can only append three lead event types
-  (migration 021), so every new event is admin-only already.
+- Agents can only append three lead event types (migration 021), so every
+  new event is admin-only already. The events insert policy also refuses
+  `commission.eligible` and the "tandem-engine" source from any authenticated
+  session, so only the release job (run as the schema owner) releases a line.
+- `release_due_commissions()`'s idempotency key includes the line's
+  `last_event_id`, so a line released, voided and reinstated can be released
+  again without colliding with its first release.
+- `tandem.leads.partner_id` is granted to authenticated and guarded by the
+  status trigger: only an admin can change it.
 
 ## Invariants
 
