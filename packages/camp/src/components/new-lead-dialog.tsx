@@ -26,6 +26,7 @@ const EMPTY_FORM = {
   address: "",
   qualificationMetric: "15",
   productTag: "",
+  partnerId: "",
 }
 
 export function NewLeadDialog({ basePath }: { basePath: string }) {
@@ -52,6 +53,7 @@ export function NewLeadDialog({ basePath }: { basePath: string }) {
         address: form.address || undefined,
         qualificationMetric: Number(form.qualificationMetric),
         productTag: form.productTag,
+        partnerId: form.partnerId || undefined,
       })
       setOpen(false)
       setForm(EMPTY_FORM)
@@ -124,6 +126,18 @@ export function NewLeadDialog({ basePath }: { basePath: string }) {
             />
             <p className="text-xs text-muted-foreground">
               A whole number, 0 or more. Use 0 to skip manual review.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="partnerId">Referred by partner (optional)</Label>
+            <Input
+              id="partnerId"
+              value={form.partnerId}
+              onChange={(e) => update("partnerId", e.target.value)}
+              placeholder="Partner id"
+            />
+            <p className="text-xs text-muted-foreground">
+              A lead earns commission only if it has a partner. You can also attach one later.
             </p>
           </div>
           <div className="flex flex-col gap-2">

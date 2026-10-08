@@ -313,8 +313,8 @@ const eventCount = async (leadId, type) => Number((await pool.query("select coun
   check("running the sweep again changes nothing", sweepAgain.eventsAppended === 0);
   await actions.approveCommission(yearly, thirdLine.id);
   adapterCalls = [];
-  await actions.payCommission(yearly, thirdLine.id);
-  check("a transferred line can only ever be paid to the house account", adapterCalls.length === 1 && adapterCalls[0].partnerId === "house" && adapterCalls[0].beneficiary === "house");
+  check("Camp refuses to pay a house-account line and makes no transfer",
+    await rejects(() => actions.payCommission(yearly, thirdLine.id), /house account/) && adapterCalls.length === 0 && (await line(yearly, "y2-first")).status === "approved");
   await pay(monthly, "inv_d", 9990, iso(-2));
   check("a payment after deactivation goes to the house account under the policy", (await line(monthly, "inv_d")).beneficiary === "house" && (await line(monthly, "inv_d")).original_partner_id === "life-partner");
 
@@ -353,6 +353,86 @@ const eventCount = async (leadId, type) => Number((await pool.query("select coun
   check("an agent cannot move a line to another account", await rejects(() => withTandemSession(pool, agentUser, (client) => appendLeadEvents(client, { workspaceId, leadId: monthly, actor: { role: "agent" }, events: [{ type: "commission.transferred", data: { payoutId: partnerLineId, toPartnerId: "agent", reason: "mine" } }] })), /owner or admin/));
   check("without the app check, the database still refuses an agent's money event", await rejects(() => withTandemSession(pool, agentUser, (client) => appendLeadEvents(client, { workspaceId, leadId: monthly, events: [{ type: "commission.transferred", data: { payoutId: partnerLineId, toPartnerId: "agent", reason: "mine" } }] }))));
   check("the agent attempts left the line with the partner", (await line(monthly, "inv_e")).partner_id === "life-partner" && await projectionMatches(monthly));
+
+  // 7. Regressions for the 0.2 pre-release audit.
+  const payWith = (cfg, leadId, paymentId, amountMinor, confirmedAt, currency = "MYR") => asOwner((client) => recordPayment(client, {
+    workspaceId, leadId, payment: { paymentId, amountMinor, currency, confirmedAt }, config: cfg,
+    partnerStatus: readPartner(client), source: "stripe", actor: { role: "owner" },
+  }));
+  const runRelease = async () => {
+    try { await pool.query("select payout_id from tandem.release_due_commissions()"); return { ok: true }; }
+    catch (error) { return { ok: false, error: error.message }; }
+  };
+  const asOwnerAppend = (leadId, events) => asOwner((client) => appendLeadEvents(client, { workspaceId, leadId, actor: { role: "owner" }, events }));
+
+  // 7a. Release, void through a deactivation, reinstate, release again. The
+  // release job must not crash, and must still release an unrelated line.
+  const voidConfig = { ...config, partners: { houseAccountId: "house", onDeactivation: { futurePayments: "house", heldLines: "void" } } };
+  for (const id of ["void-partner", "innocent-partner"]) await setPartner(id, true);
+  const { leadId: voidLead } = await lifeLead("Void Co", "void-partner");
+  await payWith(voidConfig, voidLead, "void_1", 10000, iso(-40));
+  const voidLine = await line(voidLead, "void_1");
+  check("a due line is released the first time", (await runRelease()).ok && (await line(voidLead, "void_1")).status === "eligible");
+  await setPartner("void-partner", false);
+  await asOwner((client) => deactivatePartner(client, { workspaceId, partnerId: "void-partner", config: voidConfig, actor: { role: "owner" } }));
+  check("deactivating with heldLines void cancels the released line", (await line(voidLead, "void_1")).status === "voided");
+  await setPartner("void-partner", true);
+  await asOwnerAppend(voidLead, [{ type: "commission.reinstated", data: { payoutId: voidLine.id, amountMinor: 2500, releaseAt: iso(-1) } }]);
+  const { leadId: innocent } = await lifeLead("Innocent Co", "innocent-partner");
+  await payWith(config, innocent, "innocent_1", 10000, iso(-40));
+  const secondRun = await runRelease();
+  check("after release, void and reinstate, the release job does not fail", secondRun.ok);
+  check("an unrelated due line is released in the same run", (await line(innocent, "innocent_1")).status === "eligible");
+  check("the reinstated line is released again and both leads replay to their projections",
+    (await line(voidLead, "void_1")).status === "eligible" && await projectionMatches(voidLead) && await projectionMatches(innocent));
+
+  // 7b. A payment on a lead with no partner leaves a visible decision, and a
+  // partner can be attached later so the next payment earns commission.
+  const { leadId: direct } = await lifeLead("Direct Co", undefined);
+  const directPay = await payWith(config, direct, "direct_1", 10000, iso(-3));
+  const skipped = (await pool.query("select payload from tandem.events where lead_id = $1 and event_type = 'commission.skipped'", [direct])).rows;
+  check("a payment on a lead with no partner records why no commission is owed",
+    directPay.plan?.kind === "skip" && skipped.length === 1 && skipped[0].payload.paymentId === "direct_1" && /no partner/.test(skipped[0].payload.reason) && (await lines(direct)).length === 0);
+  const attribute = (leadId, partnerId) => asOwnerAppend(leadId, [{ type: "lead.partner_attributed", data: { partnerId, reason: "referral confirmed by the partner team" } }]);
+  check("an agent cannot attach a partner", await rejects(() => withTandemSession(pool, agentUser, (client) => appendLeadEvents(client, {
+    workspaceId, leadId: direct, actor: { role: "agent" }, events: [{ type: "lead.partner_attributed", data: { partnerId: "agent-pick", reason: "mine" } }],
+  })), /owner or admin/));
+  await attribute(direct, "life-partner");
+  await payWith(config, direct, "direct_2", 10000, iso(-2));
+  check("once a partner is attached the next payment earns a line, and the skipped payment stays skipped",
+    (await line(direct, "direct_2"))?.partner_id === "life-partner" && !(await line(direct, "direct_1"))
+    && (await pool.query("select partner_id from tandem.leads where id = $1", [direct])).rows[0].partner_id === "life-partner" && await projectionMatches(direct));
+  check("a partner cannot be attached twice, or to a lead created with one", await rejects(() => attribute(direct, "life-partner")) && await rejects(() => attribute(monthly, "someone-else")));
+
+  // 7c. A 0.1.0-era lead: the sample data writes 0.1-shaped events, with the
+  // partner on the commission and none on lead.created.
+  await setPartner("sample-partner", true);
+  const sampleLead = (await pool.query("select lead_id from tandem.payouts where workspace_id = $1 and partner_id = 'sample-partner' and status = 'paid' limit 1", [workspaceId])).rows[0].lead_id;
+  check("a 0.1-era lead cannot be attributed to a partner other than the one on its existing commission", await rejects(() => attribute(sampleLead, "someone-else")));
+  await attribute(sampleLead, "sample-partner");
+  const upgraded = await payWith(config, sampleLead, "inv_after_attribution", 20000, iso(-1), "USD");
+  check("a 0.1-era lead earns commission on its next payment once its partner is attached",
+    upgraded.plan?.kind === "hold" && (await line(sampleLead, "inv_after_attribution"))?.partner_id === "sample-partner" && await projectionMatches(sampleLead));
+
+  // 7d. Camp's New lead form records the referring partner.
+  currentUser = owner;
+  const campLead = await actions.createLead({ companyName: "Camp Referred Co", contactPhone: "+60 12-000 0000", qualificationMetric: 1, productTag: "starter", partnerId: "life-partner" });
+  const campCreated = (await pool.query("select payload from tandem.events where lead_id = $1 and event_type = 'lead.created'", [campLead])).rows[0].payload;
+  check("Camp's New lead form records the referring partner on the event and the projection",
+    campCreated.partnerId === "life-partner" && (await pool.query("select partner_id from tandem.leads where id = $1", [campLead])).rows[0].partner_id === "life-partner");
+
+  // 7e. Only the release job releases, and nothing is stamped in the future.
+  const { leadId: early } = await lifeLead("Early Co", "life-partner");
+  await payWith(config, early, "early_1", 10000, iso(0));
+  const earlyLine = await line(early, "early_1");
+  check("commission.eligible stamped 31 days ahead is refused",
+    await rejects(() => asOwnerAppend(early, [{ type: "commission.eligible", data: { payoutId: earlyLine.id }, occurredAt: iso(31) }])) && (await line(early, "early_1")).status === "held");
+  check("commission.eligible is refused from the app even with an honest timestamp",
+    await rejects(() => asOwnerAppend(early, [{ type: "commission.eligible", data: { payoutId: earlyLine.id } }]), /release job/));
+  check("an event stamped more than five minutes ahead is refused",
+    await rejects(() => asOwnerAppend(early, [{ type: "lead.stage_changed", data: { salesStage: "Negotiating" }, occurredAt: iso(1) }]), /future/));
+  check("a timestamp within the clock-skew allowance is accepted",
+    (await asOwnerAppend(early, [{ type: "lead.stage_changed", data: { salesStage: "Negotiating" }, occurredAt: new Date(Date.now() + 60_000).toISOString() }])).appended.length === 1);
 }
 
 await pool.end();

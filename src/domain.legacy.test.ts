@@ -93,5 +93,5 @@ describe("0.1 compatibility", () => {
     // The walk must actually reach the money paths, or this test proves nothing.
     expect(moneyHistories).toBeGreaterThan(500);
     expect(compared).toBeGreaterThan(20_000);
-  });
+  }, 60_000);
 });

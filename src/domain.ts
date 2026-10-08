@@ -109,6 +109,10 @@ export type TandemEvent = EventBase & (
   | { type: "lead.assigned"; data: { agentId: string; territoryId: string | null } }
   | { type: "lead.lost"; data: { reason: string } }
   | { type: "lead.stage_changed"; data: { salesStage: LeadSalesStage } }
+  /** Attaches the referring partner to a lead created without one (any 0.1
+   * lead, or one created before the referral was known). Admin-only. Allowed
+   * once, and only if no commission line names a different referrer. */
+  | { type: "lead.partner_attributed"; data: { partnerId: string; reason: string } }
   | { type: "conversion.confirmed"; data: Record<string, never> }
   /** paymentId is the provider's id for this payment (a Stripe invoice or
    * charge id). It is what lets a lead hold many payments and makes a
@@ -138,6 +142,10 @@ export type TandemEvent = EventBase & (
   /** No commission is owed on this payment, and why (for example the
    * referring partner is inactive and the policy is "forfeit"). */
   | { type: "commission.forfeited"; data: { paymentId: string; partnerId: string; reason: string } }
+  /** No commission line was created for this payment, and why: the lead has
+   * no partner, or the commission rounds to zero. Recorded so a payment
+   * without a line is a visible decision, not a silent gap. */
+  | { type: "commission.skipped"; data: { paymentId: string; reason: string } }
   /** An unpaid line moves to the house account. The line keeps its id and
    * history; an approved line goes back to eligible because the approval
    * was given for a different recipient. */
@@ -195,6 +203,8 @@ export type PaymentState = {
   refunded: boolean;
   /** Set when commission.forfeited recorded that no line is owed. */
   forfeited: { partnerId: string; reason: string } | null;
+  /** Set when commission.skipped recorded that no line was created. */
+  skipped: { reason: string } | null;
 };
 
 export type LeadState = {
@@ -320,6 +330,13 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         if (!leadSalesStages.includes(event.data.salesStage)) throw new Error("invalid salesStage");
         state = { ...currentLead(state), salesStage: event.data.salesStage, lastSequence };
         break;
+      case "lead.partner_attributed": {
+        const partnerId = event.data.partnerId.trim();
+        requireTransition(state !== null && state.partnerId === null && state.commissions.every((l) => l.originalPartnerId === partnerId), event.type);
+        if (!partnerId || !event.data.reason.trim()) throw new Error("partnerId and reason are required");
+        state = { ...currentLead(state), partnerId, lastSequence };
+        break;
+      }
       case "lead.assigned":
         requireTransition(state !== null && state.status !== "Lost" && state.status !== "Refunded", event.type);
         if (!event.data.agentId.trim()) throw new Error("agentId is required");
@@ -342,7 +359,7 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         const s = currentLead(state);
         if (s.payments.some((p) => p.paymentId === paymentId)) throw new Error("payment already recorded");
         if (s.payments.length > 0 && s.payments[0].currency !== event.data.currency) throw new Error("all payments on a lead must use the same currency");
-        const payments = [...s.payments, { paymentId, amountMinor: event.data.amountMinor, currency: event.data.currency, confirmedAt: event.occurredAt, refundedMinor: 0, refunded: false, forfeited: null }];
+        const payments = [...s.payments, { paymentId, amountMinor: event.data.amountMinor, currency: event.data.currency, confirmedAt: event.occurredAt, refundedMinor: 0, refunded: false, forfeited: null, skipped: null }];
         state = withMoney(s, payments, s.commissions, lastSequence);
         break;
       }
@@ -407,7 +424,7 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         if (d.paymentId !== undefined) payment = s.payments.find((p) => p.paymentId === d.paymentId);
         else if (s.payments.length === 1) payment = s.payments[0];
         else throw new Error("paymentId is required to hold a commission on a lead with more than one payment");
-        requireTransition(payment !== undefined && !payment.refunded && payment.forfeited === null, event.type);
+        requireTransition(payment !== undefined && !payment.refunded && payment.forfeited === null && payment.skipped === null, event.type);
         requireTransition(!s.commissions.some((l) => l.paymentId === payment.paymentId), event.type);
         if (s.commissions.some((l) => l.payoutId === d.payoutId)) throw new Error("payoutId is already used on this lead");
         assertMoney(d.amountMinor, d.currency);
@@ -434,9 +451,20 @@ export function replayLeadEvents(events: readonly TandemEvent[], workspaceId: st
         const s = currentLead(state);
         const payments = s.payments.map((p) => ({ ...p }));
         const payment = payments.find((p) => p.paymentId === event.data.paymentId);
-        requireTransition(payment !== undefined && payment.forfeited === null && !s.commissions.some((l) => l.paymentId === payment.paymentId), event.type);
+        requireTransition(payment !== undefined && payment.forfeited === null && payment.skipped === null && !s.commissions.some((l) => l.paymentId === payment.paymentId), event.type);
         if (!event.data.partnerId.trim() || !event.data.reason.trim()) throw new Error("partnerId and reason are required");
         payment.forfeited = { partnerId: event.data.partnerId, reason: event.data.reason.trim() };
+        state = withMoney(s, payments, s.commissions, lastSequence);
+        break;
+      }
+      case "commission.skipped": {
+        requireTransition(state !== null, event.type);
+        const s = currentLead(state);
+        const payments = s.payments.map((p) => ({ ...p }));
+        const payment = payments.find((p) => p.paymentId === event.data.paymentId);
+        requireTransition(payment !== undefined && payment.forfeited === null && payment.skipped === null && !s.commissions.some((l) => l.paymentId === payment.paymentId), event.type);
+        if (!event.data.reason.trim()) throw new Error("reason is required");
+        payment.skipped = { reason: event.data.reason.trim() };
         state = withMoney(s, payments, s.commissions, lastSequence);
         break;
       }

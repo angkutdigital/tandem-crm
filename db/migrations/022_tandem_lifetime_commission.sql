@@ -1,18 +1,21 @@
 -- Lifetime commission (0.2). A lead can now hold many payments, each with
 -- at most one commission line. See docs/design-0.2-lifetime-commission.md.
 --
--- No RLS policy changes: since 021, an agent may append only lead.lost,
--- lead.stage_changed and conversion.confirmed, and payout inserts/updates
--- are admin-only. Every new event type below is therefore admin-only too.
+-- Since 021, an agent may append only lead.lost, lead.stage_changed and
+-- conversion.confirmed, and payout inserts/updates are admin-only, so every
+-- new event type below is admin-only too. Section 4 tightens the events
+-- insert policy further: commission.eligible and the "tandem-engine" source
+-- now belong to the release job alone, for admins as well as agents.
 
--- 1. The three new event types.
+-- 1. The new event types.
 alter table tandem.events drop constraint events_event_type_check;
 alter table tandem.events add constraint events_event_type_check check (event_type in (
   'lead.created', 'lead.assigned', 'lead.lost', 'lead.stage_changed', 'conversion.confirmed',
   'payment.confirmed', 'payment.refunded', 'commission.held',
   'commission.eligible', 'commission.approved', 'commission.paid', 'commission.voided',
   'commission.adjusted', 'commission.reinstated', 'commission.clawback_requested',
-  'commission.forfeited', 'commission.transferred', 'commission.clawback_recovered'
+  'commission.forfeited', 'commission.transferred', 'commission.clawback_recovered',
+  'lead.partner_attributed', 'commission.skipped'
 ));
 
 -- 2. Payout rows are now commission lines. Every column mirrors a field the
@@ -72,18 +75,23 @@ create unique index tandem_payouts_one_line_per_payment
   where payment_id is not null;
 
 create index tandem_payouts_lead_idx on tandem.payouts (workspace_id, lead_id);
--- deactivatePartner() finds a partner's leads from lead.created.
+-- deactivatePartner() finds a partner's leads from lead.created and
+-- lead.partner_attributed.
 create index tandem_events_lead_partner_idx on tandem.events (workspace_id, (payload->>'partnerId'))
-  where event_type = 'lead.created';
+  where event_type in ('lead.created', 'lead.partner_attributed');
 create index tandem_payouts_partner_open_idx on tandem.payouts (workspace_id, partner_id)
   where status in ('held', 'eligible', 'approved');
 
 -- 3. release_due_commissions(): with many lines, the lead may already be
 --    Commission_Eligible because of another line. The derived status after
 --    any line becomes eligible is Commission_Eligible (domain.ts
---    deriveLeadStatus), so accept either starting state. Unchanged otherwise
---    from 011 (skips lines under an open dispute, locks with skip locked,
---    raises on a duplicate eligibility event).
+--    deriveLeadStatus), so accept either starting state.
+--    The eligibility event's idempotency key names the event that last put
+--    the line on hold (its last_event_id), not just the line. A line can be
+--    released, voided and reinstated; with a key per line the second release
+--    collided with the first, raised, and stopped the job for every
+--    workspace. Otherwise unchanged from 011 (skips lines under an open
+--    dispute, locks with skip locked, raises on a genuine duplicate).
 create or replace function tandem.release_due_commissions()
 returns table (payout_id uuid)
 language plpgsql
@@ -110,7 +118,7 @@ begin
       event_type, payload, occurred_at
     ) values (
       due.workspace_id, 'payout', due.id, due.lead_id, 'tandem-engine',
-      'payout:' || due.id::text || ':eligible', 'commission.eligible',
+      'payout:' || due.id::text || ':eligible:' || coalesce(due.last_event_id::text, 'initial'), 'commission.eligible',
       pg_catalog.jsonb_build_object('payoutId', due.id), now()
     )
     on conflict (workspace_id, source, source_event_id) do nothing
@@ -145,3 +153,56 @@ begin
 end;
 $$;
 revoke all on function tandem.release_due_commissions() from public;
+
+-- 4. Only the release job may release a line or use its reserved source.
+--    The job runs as the schema owner, which row level security does not
+--    apply to, so this only constrains authenticated sessions: an admin can
+--    no longer append commission.eligible (which would end a hold early on
+--    a caller-supplied timestamp) or write as "tandem-engine". The agent
+--    rules are unchanged from 021.
+drop policy tandem_events_insert on tandem.events;
+create policy tandem_events_insert on tandem.events
+  for insert with check (
+    event_type <> 'commission.eligible'
+    and source <> 'tandem-engine'
+    and (
+      tandem.is_workspace_admin(workspace_id)
+      or (
+        event_type in ('lead.lost', 'lead.stage_changed', 'conversion.confirmed')
+        and lead_id in (
+          select id from tandem.leads
+          where tandem.leads.workspace_id = tandem.events.workspace_id
+            and tandem.leads.assignee_id = tandem.current_agent_id(tandem.events.workspace_id)
+        )
+      )
+    )
+  );
+
+-- 5. The lead projection records its partner (lead.created or
+--    lead.partner_attributed). Writers set it with the rest of the
+--    projection, so authenticated needs the column; the guard trigger keeps
+--    changing it admin-only, the same way 021 guards pipeline_status.
+grant update (partner_id) on tandem.leads to authenticated;
+
+create or replace function tandem.guard_lead_status_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if current_user::text <> 'authenticated' then
+    return new;
+  end if;
+  if new.pipeline_status is distinct from old.pipeline_status
+     and not tandem.is_workspace_admin(new.workspace_id)
+     and new.pipeline_status not in ('Won', 'Lost') then
+    raise exception 'only a workspace admin can move a lead to %', new.pipeline_status
+      using errcode = '42501';
+  end if;
+  if new.partner_id is distinct from old.partner_id
+     and not tandem.is_workspace_admin(new.workspace_id) then
+    raise exception 'only a workspace admin can change a lead''s partner'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;

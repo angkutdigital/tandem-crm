@@ -169,6 +169,10 @@ export async function payCommission(leadId: string, payoutId: string): Promise<v
     if (commission.status !== "approved") {
       throw new Error(`this commission is ${commission.status}; only an approved commission can be paid`);
     }
+    // A house line is owed to the business itself: nothing to transfer.
+    if (commission.beneficiary === "house") {
+      throw new Error("this commission belongs to the house account; house lines are not paid through the payout adapter");
+    }
 
     const { payoutReference } = await adapter.executePayout({
       payoutId,

@@ -18,7 +18,11 @@ import type { TandemConfig } from "../tandem.config.js";
  * - Every projection update checks its row count, so an update that row
  *   level security filtered out fails loudly instead of leaving the log
  *   and the projection disagreeing.
- * - The "tandem-engine" source is reserved for the scheduled release job.
+ * - The "tandem-engine" source and commission.eligible are reserved for the
+ *   scheduled release job (tandem.release_due_commissions), so a line's hold
+ *   can only end when the database clock says it has.
+ * - No event may be stamped in the future (beyond a few minutes of clock
+ *   skew): occurredAt is a business fact, and the hold rules trust it.
  *
  * Call it inside a transaction (withTandemSession). It never commits.
  */
@@ -44,6 +48,8 @@ export type NewLeadEvent = {
 export const AGENT_LEAD_EVENT_TYPES: readonly TandemEvent["type"][] = ["lead.lost", "lead.stage_changed", "conversion.confirmed"];
 const RESERVED_SOURCE = "tandem-engine";
 const DAY_MS = 86_400_000;
+/** How far ahead of this server's clock an event may be stamped. */
+export const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -119,6 +125,14 @@ export async function appendLeadEvents(client: PoolClient, input: {
     const source = (e.source ?? input.defaultSource ?? "app").trim().toLowerCase();
     if (!source) throw new Error("source must not be empty");
     if (source === RESERVED_SOURCE) throw new Error(`the "${RESERVED_SOURCE}" source is reserved for the scheduled release job`);
+    if (e.type === "commission.eligible") {
+      throw new Error("commission.eligible is written only by the release job (tandem.release_due_commissions), when a line's hold has ended");
+    }
+    if (e.occurredAt !== undefined) {
+      const at = Date.parse(e.occurredAt);
+      if (!Number.isFinite(at)) throw new Error("occurredAt must be an ISO 8601 instant");
+      if (at > Date.now() + MAX_CLOCK_SKEW_MS) throw new Error("occurredAt is in the future; events record what has already happened");
+    }
     if (input.actor && !isManager(input.actor) && !AGENT_LEAD_EVENT_TYPES.includes(e.type)) {
       throw new Error(`only a workspace owner or admin can append ${e.type}`);
     }
@@ -174,9 +188,10 @@ export async function appendLeadEvents(client: PoolClient, input: {
     `update tandem.leads
      set pipeline_status = $3, sales_stage = $4,
          assignee_id = coalesce($5, assignee_id), territory_id = coalesce($6, territory_id),
+         partner_id = coalesce($8, partner_id),
          last_event_sequence = $7, updated_at = now()
      where id = $1 and workspace_id = $2`,
-    [leadId, workspaceId, state.status, state.salesStage, state.agentId, state.territoryId, appended[appended.length - 1].sequence]
+    [leadId, workspaceId, state.status, state.salesStage, state.agentId, state.territoryId, appended[appended.length - 1].sequence, state.partnerId]
   );
   if (leadUpdate.rowCount !== 1) throw new Error("the lead projection was not updated; this account may not modify that lead");
 
@@ -287,6 +302,8 @@ export async function recordPayment(client: PoolClient, input: {
     events.push({ type: "commission.held", data: plan.data, occurredAt: payment.confirmedAt, source: input.source, sourceEventId: `payment:${payment.paymentId}:commission` });
   } else if (plan.kind === "forfeit") {
     events.push({ type: "commission.forfeited", data: plan.data, occurredAt: payment.confirmedAt, source: input.source, sourceEventId: `payment:${payment.paymentId}:commission` });
+  } else {
+    events.push({ type: "commission.skipped", data: plan.data, occurredAt: payment.confirmedAt, source: input.source, sourceEventId: `payment:${payment.paymentId}:commission` });
   }
   const result = await appendLeadEvents(client, { workspaceId, leadId, events, actor: input.actor });
   return { alreadyRecorded: false, state: result.state, plan };
@@ -317,6 +334,27 @@ export async function recordRefund(client: PoolClient, input: {
 }
 
 /**
+ * Attaches the referring partner to a lead created without one, such as a
+ * 0.1 lead (0.1 kept the partner on the commission, not the lead). Admin-only.
+ * Refused if the lead already has a partner, or if an existing commission line
+ * names a different referrer. Payments already recorded keep their decision;
+ * the next payment earns commission.
+ */
+export async function attributePartner(client: PoolClient, input: {
+  workspaceId: string;
+  leadId: string;
+  partnerId: string;
+  reason: string;
+  actor?: TandemActor;
+  source?: string;
+}): Promise<AppendResult> {
+  return appendLeadEvents(client, {
+    workspaceId: input.workspaceId, leadId: input.leadId, actor: input.actor, defaultSource: input.source ?? "app",
+    events: [{ type: "lead.partner_attributed", data: { partnerId: input.partnerId.trim(), reason: input.reason.trim() } }],
+  });
+}
+
+/**
  * Applies the workspace's heldLines policy to every lead with an unpaid
  * line still owed to this partner. Commit the host's own "partner is
  * inactive" change before calling this, so payments that arrive during the
@@ -331,14 +369,14 @@ export async function deactivatePartner(client: PoolClient, input: {
   actor?: TandemActor;
   source?: string;
 }): Promise<{ leadsChanged: number; eventsAppended: number }> {
-  // Every lead this partner referred, from lead.created (the source of
-  // truth), not from payout rows: a payment that commits while this sweep
+  // Every lead this partner referred, from lead.created or a later
+  // lead.partner_attributed (the source of truth), not from payout rows: a payment that commits while this sweep
   // is running may have created the partner's first line after a payout
   // query would have run. Each lead is then locked and replayed, so the
   // sweep sees everything committed before it got the lock.
   const leads = await client.query<{ lead_id: string }>(
     `select distinct lead_id from tandem.events
-     where workspace_id = $1 and event_type = 'lead.created' and payload->>'partnerId' = $2
+     where workspace_id = $1 and event_type in ('lead.created', 'lead.partner_attributed') and payload->>'partnerId' = $2
      order by lead_id`,
     [input.workspaceId, input.partnerId]
   );

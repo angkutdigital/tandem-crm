@@ -151,11 +151,13 @@ describe("planning a payment's commission", () => {
     const plan = planPaymentCommission({ lead, payment: { paymentId: "inv_year", amountMinor: 118_800, currency: "MYR", confirmedAt: "2026-03-01T00:00:00.000Z" }, partner: { id: "partner-1", active: true }, config: config("continue"), payoutId: "py", holdDays: 60 });
     expect(plan).toMatchObject({ kind: "hold", data: { amountMinor: 29_700, customerAgeMonths: 0, releaseAt: "2026-04-30T00:00:00.000Z" } });
   });
-  it("records nothing for a lead without a partner or a commission that rounds to zero", () => {
+  it("records a visible skip for a lead without a partner or a commission that rounds to zero", () => {
     seq = 0;
     const noPartner = replay([ev("lead.created", { companyName: "Direct", qualificationMetric: 1, qualification: "Automated_Setup" }), ev("conversion.confirmed", {})]);
-    expect(planPaymentCommission({ lead: noPartner, payment: payment("2026-02-01T00:00:00.000Z"), partner: null, config: config("house"), payoutId: "p" }).kind).toBe("none");
-    expect(planPaymentCommission({ lead: firstPaid(), payment: { ...payment("2026-02-01T00:00:00.000Z"), amountMinor: 1 }, partner: { id: "partner-1", active: true }, config: config("house"), payoutId: "p", basisPoints: 1 }).kind).toBe("none");
+    const noPartnerPlan = planPaymentCommission({ lead: noPartner, payment: payment("2026-02-01T00:00:00.000Z"), partner: null, config: config("house"), payoutId: "p" });
+    expect(noPartnerPlan).toMatchObject({ kind: "skip", type: "commission.skipped", data: { paymentId: "inv_2", reason: "the lead has no partner" } });
+    const zeroPlan = planPaymentCommission({ lead: firstPaid(), payment: { ...payment("2026-02-01T00:00:00.000Z"), amountMinor: 1 }, partner: { id: "partner-1", active: true }, config: config("house"), payoutId: "p", basisPoints: 1 });
+    expect(zeroPlan).toMatchObject({ kind: "skip", type: "commission.skipped", data: { reason: "the commission rounds to zero" } });
   });
   it("produces events the reducer accepts, and a forfeited payment can never get a line", () => {
     const events = [...wonLead(), pay("inv_1", 9_990, "2026-01-15T10:00:00.000Z")];
@@ -210,5 +212,35 @@ describe("partner deactivation", () => {
   it("totals a partner's balance per currency", () => {
     const lead = replay(leadWithLines());
     expect(partnerBalance([lead], "partner-1")).toEqual({ MYR: { heldMinor: 2_500, eligibleMinor: 0, approvedMinor: 2_500, paidMinor: 2_500, clawbackOwedMinor: 0 } });
+  });
+});
+
+describe("attaching a partner to a lead", () => {
+  const direct = () => {
+    seq = 0;
+    return [ev("lead.created", { companyName: "Direct", qualificationMetric: 1, qualification: "Automated_Setup" }), ev("conversion.confirmed", {})];
+  };
+  const attribute = (partnerId: string) => ev("lead.partner_attributed", { partnerId, reason: "referral confirmed" });
+
+  it("attaches a partner once, and the next payment earns a line", () => {
+    const events = [...direct(), pay("inv_1", 10_000, "2026-01-01T00:00:00.000Z"), ev("commission.skipped", { paymentId: "inv_1", reason: "the lead has no partner" }), attribute("partner-1")];
+    const s = replay(events);
+    expect(s.partnerId).toBe("partner-1");
+    expect(s.payments[0].skipped).toEqual({ reason: "the lead has no partner" });
+    expect(() => replay([...events, hold("p1", "inv_1", 100, "2026-01-01T00:00:00.000Z", "2026-01-31T00:00:00.000Z")])).toThrow("invalid transition");
+    const config = defineTandemConfig({ qualification: { automatedSetupMaxQualificationMetric: 15 }, commission: { holdDays: 30, rateSchedule: [{ fromMonth: 0, basisPoints: 2_500 }] } });
+    const plan = planPaymentCommission({ lead: s, payment: { paymentId: "inv_2", amountMinor: 10_000, currency: "MYR", confirmedAt: "2026-02-01T00:00:00.000Z" }, partner: { id: "partner-1", active: true }, config, payoutId: "p2" });
+    expect(plan).toMatchObject({ kind: "hold", data: { partnerId: "partner-1", beneficiary: "partner" } });
+    expect(() => replay([...events, attribute("partner-1")])).toThrow("invalid transition");
+  });
+
+  it("refuses a lead that already has a partner, a blank partner or reason, and a partner other than the one on an existing line", () => {
+    expect(() => replay([...wonLead(), attribute("partner-2")])).toThrow("invalid transition");
+    expect(() => replay([...direct(), ev("lead.partner_attributed", { partnerId: " ", reason: "x" })])).toThrow("partnerId and reason are required");
+    expect(() => replay([...direct(), ev("lead.partner_attributed", { partnerId: "partner-1", reason: "" })])).toThrow("partnerId and reason are required");
+    // A 0.1 lead: the partner lives on the commission, not on lead.created.
+    const legacy = [...direct(), ev("payment.confirmed", { amountMinor: 10_000, currency: "MYR" }), ev("commission.held", { payoutId: "p1", partnerId: "partner-1", amountMinor: 1_000, currency: "MYR", releaseAt: "2026-01-31T00:00:00.000Z" })];
+    expect(() => replay([...legacy, attribute("partner-2")])).toThrow("invalid transition");
+    expect(replay([...legacy, attribute("partner-1")]).partnerId).toBe("partner-1");
   });
 });

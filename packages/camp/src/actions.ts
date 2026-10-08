@@ -23,12 +23,16 @@ export async function createLead(input: {
   productTag: string;
   contactName?: string;
   address?: string;
+  /** The partner who referred this customer. A lead needs one to earn
+   * commission; it can also be attached later (lead.partner_attributed). */
+  partnerId?: string;
 }): Promise<string> {
   const { pool, workspaceId } = getTandemCampConfig();
   const member = await requireCurrentMember();
   if (!input.companyName.trim()) throw new Error("company name is required");
   if (!input.contactPhone.trim()) throw new Error("contact phone is required");
   if (!input.productTag.trim()) throw new Error("product tag is required");
+  const partnerId = input.partnerId?.trim() || undefined;
 
   const leadId = randomUUID();
   const qualification = qualifyLead({ qualificationMetric: input.qualificationMetric }, defaultTandemConfig);
@@ -39,6 +43,7 @@ export async function createLead(input: {
     data: {
       companyName: input.companyName.trim(), qualificationMetric: input.qualificationMetric,
       qualification: qualification.status,
+      ...(partnerId ? { partnerId } : {}),
     },
   } as TandemEvent;
 
@@ -57,9 +62,9 @@ export async function createLead(input: {
       [newEvent.id, workspaceId, leadId, newEvent.source, newEvent.sourceEventId, newEvent.type, JSON.stringify(newEvent.data), newEvent.occurredAt]
     );
     await client.query(
-      `insert into tandem.leads (id, workspace_id, company_name, contact_phone, qualification_metric, product_tag, attributes, pipeline_status, last_event_sequence)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [leadId, workspaceId, state.companyName, input.contactPhone.trim(), state.qualificationMetric, input.productTag.trim(), JSON.stringify(attributes), state.status, state.lastSequence]
+      `insert into tandem.leads (id, workspace_id, company_name, contact_phone, qualification_metric, product_tag, attributes, pipeline_status, last_event_sequence, partner_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [leadId, workspaceId, state.companyName, input.contactPhone.trim(), state.qualificationMetric, input.productTag.trim(), JSON.stringify(attributes), state.status, state.lastSequence, state.partnerId]
     );
   });
   revalidatePath("/tandem-camp/leads");
@@ -218,6 +223,12 @@ export async function payCommission(leadId: string, payoutId: string): Promise<v
     if (!commission) throw new Error("that payout does not belong to this lead");
     if (commission.status !== "approved") {
       throw new Error(`this commission is ${commission.status}; only an approved commission can be paid`);
+    }
+    // A house line is owed to the business itself, so there is no one to
+    // transfer money to. Refuse rather than hand "house" to the adapter as
+    // if it were a partner.
+    if (commission.beneficiary === "house") {
+      throw new Error("this commission belongs to the house account; Camp does not pay house lines through the payout adapter");
     }
 
     const { payoutReference } = await payoutAdapter.executePayout({

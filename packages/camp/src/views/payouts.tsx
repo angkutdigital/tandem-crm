@@ -92,7 +92,12 @@ export async function PayoutsView() {
                     {isManager ? (
                       <TableCell>
                         {payout.status === "eligible" ? <ApprovePayoutButton leadId={payout.leadId} payoutId={payout.id} /> : null}
-                        {payout.status === "approved" ? (
+                        {/* A house line is owed to the business itself, so there is
+                            no transfer to make and no Pay action. */}
+                        {payout.status === "approved" && payout.beneficiary === "house" ? (
+                          <span className="text-xs text-muted-foreground">House</span>
+                        ) : null}
+                        {payout.status === "approved" && payout.beneficiary !== "house" ? (
                           <PayPayoutButton leadId={payout.leadId} payoutId={payout.id} />
                         ) : null}
                       </TableCell>

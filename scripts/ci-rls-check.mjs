@@ -863,6 +863,30 @@ async function main() {
     await failsWith("23514", () => withTandemSession(pool, userA, insertLine({ paymentId: `ci-${randomUUID()}`, status: "paid", clawback: 50, recovered: 51 })))
   );
 
+  // 0.2 audit fixes: attaching a partner and recording a skipped commission
+  // are admin-only, commission.eligible and the "tandem-engine" source belong
+  // to the release job alone, and only an admin can change a lead's partner.
+  for (const eventType of ["lead.partner_attributed", "commission.skipped"]) {
+    check(
+      `an agent cannot append ${eventType} to their own lead`,
+      await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertLeadEventAsAgent(eventType, "ci", `ci-agent-${eventType}`)))
+    );
+  }
+  check(
+    "an admin cannot append commission.eligible; only the release job releases a line",
+    await blockedByPolicy(() => withTandemSession(pool, userA, insertLeadEventAsAgent("commission.eligible", "ci", `ci-admin-eligible-${randomUUID()}`)))
+  );
+  check(
+    "an admin cannot use the release job's reserved source",
+    await blockedByPolicy(() => withTandemSession(pool, userA, insertLeadEventAsAgent("lead.stage_changed", "tandem-engine", `ci-admin-engine-${randomUUID()}`)))
+  );
+  check(
+    "an agent cannot change their own lead's partner",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, (client) => client.query("update tandem.leads set partner_id = 'agent-pick' where id = $1", [leadA])))
+  );
+  const adminPartner = await withTandemSession(pool, userA, (client) => client.query("update tandem.leads set partner_id = 'partner-ci' where id = $1", [leadA2]));
+  check("an admin can record a lead's partner on the projection", adminPartner.rowCount === 1);
+
   await pool.end();
 
   if (failures > 0) {

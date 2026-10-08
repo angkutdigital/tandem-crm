@@ -16,6 +16,7 @@ import {
 type EventData<T extends TandemEvent["type"]> = Extract<TandemEvent, { type: T }>["data"];
 export type CommissionHeldData = EventData<"commission.held">;
 export type CommissionForfeitedData = EventData<"commission.forfeited">;
+export type CommissionSkippedData = EventData<"commission.skipped">;
 
 function parseInstant(value: string): number {
   const parsed = Date.parse(value);
@@ -72,7 +73,7 @@ export type NewPayment = {
 };
 
 export type PaymentCommissionPlan =
-  | { kind: "none"; reason: string }
+  | { kind: "skip"; type: "commission.skipped"; data: CommissionSkippedData }
   | { kind: "hold"; type: "commission.held"; data: CommissionHeldData }
   | { kind: "forfeit"; type: "commission.forfeited"; data: CommissionForfeitedData };
 
@@ -100,7 +101,8 @@ export function planPaymentCommission(input: {
 }): PaymentCommissionPlan {
   const { lead, payment, partner, config } = input;
   const partnerId = lead.partnerId;
-  if (!partnerId) return { kind: "none", reason: "the lead has no partner" };
+  const skip = (reason: string): PaymentCommissionPlan => ({ kind: "skip", type: "commission.skipped", data: { paymentId: payment.paymentId, reason } });
+  if (!partnerId) return skip("the lead has no partner");
   if (!partner) throw new Error("the partner's status is required to plan a commission");
   if (partner.id !== partnerId) throw new Error("partner status is for a different partner than the lead's");
 
@@ -113,7 +115,7 @@ export function planPaymentCommission(input: {
     basisPoints = rateForCustomerAge(schedule, ageMonths).basisPoints;
   }
   const amountMinor = calculateCommissionMinor(payment.amountMinor, basisPoints);
-  if (amountMinor === 0) return { kind: "none", reason: "the commission rounds to zero" };
+  if (amountMinor === 0) return skip("the commission rounds to zero");
 
   const policy = config.partners?.onDeactivation ?? defaultPartnerDeactivationPolicy;
   const houseAccountId = config.partners?.houseAccountId ?? "house";
