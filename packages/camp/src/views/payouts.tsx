@@ -48,6 +48,8 @@ export async function PayoutsView() {
       <Card>
         <CardHeader>
           <CardTitle>All payouts</CardTitle>
+          {/* One row per commission line. A subscription customer gets a line
+              for every payment, each with its own hold and approval. */}
           <CardDescription>{pendingDescription}</CardDescription>
         </CardHeader>
         <CardContent>
@@ -58,6 +60,8 @@ export async function PayoutsView() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Company</TableHead>
+                  <TableHead>Owed to</TableHead>
+                  <TableHead>Payment</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Release date</TableHead>
@@ -68,7 +72,19 @@ export async function PayoutsView() {
                 {payouts.map((payout) => (
                   <TableRow key={payout.id}>
                     <TableCell>{payout.companyName}</TableCell>
-                    <TableCell>{formatCurrency(payout.amountMinor, payout.currency)}</TableCell>
+                    <TableCell>
+                      {payout.beneficiary === "house" ? (
+                        <span>House account <span className="text-xs text-muted-foreground">(referred by {payout.originalPartnerId})</span></span>
+                      ) : payout.partnerId}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{payout.paymentId ?? "-"}</TableCell>
+                    <TableCell>
+                      {formatCurrency(payout.amountMinor, payout.currency)}
+                      {payout.basisPoints !== null ? <span className="ml-1 text-xs text-muted-foreground">at {payout.basisPoints / 100}%</span> : null}
+                      {payout.clawbackOwedMinor > 0 ? (
+                        <div className="text-xs text-destructive">Owes back {formatCurrency(payout.clawbackOwedMinor, payout.currency)}</div>
+                      ) : null}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={statusVariantMap[payout.status]}>{formatStatus(payout.status)}</Badge>
                     </TableCell>
@@ -76,7 +92,12 @@ export async function PayoutsView() {
                     {isManager ? (
                       <TableCell>
                         {payout.status === "eligible" ? <ApprovePayoutButton leadId={payout.leadId} payoutId={payout.id} /> : null}
-                        {payout.status === "approved" ? (
+                        {/* A house line is owed to the business itself, so there is
+                            no transfer to make and no Pay action. */}
+                        {payout.status === "approved" && payout.beneficiary === "house" ? (
+                          <span className="text-xs text-muted-foreground">House</span>
+                        ) : null}
+                        {payout.status === "approved" && payout.beneficiary !== "house" ? (
                           <PayPayoutButton leadId={payout.leadId} payoutId={payout.id} />
                         ) : null}
                       </TableCell>

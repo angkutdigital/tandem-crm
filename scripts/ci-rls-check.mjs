@@ -805,6 +805,88 @@ async function main() {
   const validDispute = await withTandemSession(pool, agentUserA, openDisputeOn(leadA2, payoutA2));
   check("an agent can still open a dispute on their own lead's own payout", validDispute.rowCount === 1);
 
+  // 0.2 lifetime commission (migration 022). Every new money event is
+  // admin-only through 021's allowlist; these prove it for each one.
+  for (const eventType of [
+    "payment.confirmed", "payment.refunded", "commission.held",
+    "commission.forfeited", "commission.transferred", "commission.clawback_recovered",
+  ]) {
+    check(
+      `an agent cannot append ${eventType} to their own lead`,
+      await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertLeadEventAsAgent(eventType, "ci", `ci-agent-${eventType}`)))
+    );
+  }
+  const agentRedirect = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.payouts set partner_id = 'agent-invented-partner', beneficiary = 'partner' where id = $1", [payoutA2])
+  );
+  const agentForgive = await withTandemSession(pool, agentUserA, (client) =>
+    client.query("update tandem.payouts set clawback_recovered_minor = 0, clawback_amount_minor = null where id = $1", [payoutA2])
+  );
+  const payoutAfterAgent = await pool.query("select partner_id from tandem.payouts where id = $1", [payoutA2]);
+  check(
+    "an agent cannot redirect a commission line or clear its clawback",
+    agentRedirect.rowCount === 0 && agentForgive.rowCount === 0 && payoutAfterAgent.rows[0].partner_id === "agent-invented-partner"
+  );
+
+  const failsWith = async (code, fn) => {
+    try { await fn(); return false; } catch (error) { return error.code === code; }
+  };
+  const linePayment = `ci-invoice-${randomUUID()}`;
+  const insertLine = (overrides = {}) => (client) => {
+    const row = {
+      id: randomUUID(), partner: "partner-ci", original: null, beneficiary: "partner", paymentId: linePayment,
+      clawback: null, recovered: 0, status: "held", ...overrides,
+    };
+    return client.query(
+      `insert into tandem.payouts
+         (id, workspace_id, lead_id, partner_id, amount_minor, currency, hold_days, payment_confirmed_at, release_at,
+          status, last_event_id, payment_id, beneficiary, original_partner_id,
+          clawback_amount_minor, clawback_reason, clawback_requested_at, clawback_recovered_minor)
+       values ($1, $2, $3, $4, 100, 'USD', 0, now(), now(), $5, $6, $7, $8, $9, $10,
+               case when $10::bigint is null then null else 'ci' end, case when $10::bigint is null then null else now() end, $11)`,
+      [row.id, workspaceA, leadA2, row.partner, row.status, payoutEventA, row.paymentId, row.beneficiary, row.original, row.clawback, row.recovered]
+    );
+  };
+  await withTandemSession(pool, userA, insertLine());
+  const defaulted = await pool.query("select original_partner_id from tandem.payouts where payment_id = $1", [linePayment]);
+  check("a payout inserted the 0.1 way gets its original partner filled in", defaulted.rows[0]?.original_partner_id === "partner-ci");
+  check(
+    "a second commission line for the same payment is rejected by the database",
+    await failsWith("23505", () => withTandemSession(pool, userA, insertLine()))
+  );
+  check(
+    "a house line must name a referrer different from the house account",
+    await failsWith("23514", () => withTandemSession(pool, userA, insertLine({ paymentId: `ci-${randomUUID()}`, partner: "house", original: "house", beneficiary: "house" })))
+  );
+  check(
+    "recovered clawback can never exceed the clawback",
+    await failsWith("23514", () => withTandemSession(pool, userA, insertLine({ paymentId: `ci-${randomUUID()}`, status: "paid", clawback: 50, recovered: 51 })))
+  );
+
+  // 0.2 audit fixes: attaching a partner and recording a skipped commission
+  // are admin-only, commission.eligible and the "tandem-engine" source belong
+  // to the release job alone, and only an admin can change a lead's partner.
+  for (const eventType of ["lead.partner_attributed", "commission.skipped"]) {
+    check(
+      `an agent cannot append ${eventType} to their own lead`,
+      await blockedByPolicy(() => withTandemSession(pool, agentUserA, insertLeadEventAsAgent(eventType, "ci", `ci-agent-${eventType}`)))
+    );
+  }
+  check(
+    "an admin cannot append commission.eligible; only the release job releases a line",
+    await blockedByPolicy(() => withTandemSession(pool, userA, insertLeadEventAsAgent("commission.eligible", "ci", `ci-admin-eligible-${randomUUID()}`)))
+  );
+  check(
+    "an admin cannot use the release job's reserved source",
+    await blockedByPolicy(() => withTandemSession(pool, userA, insertLeadEventAsAgent("lead.stage_changed", "tandem-engine", `ci-admin-engine-${randomUUID()}`)))
+  );
+  check(
+    "an agent cannot change their own lead's partner",
+    await blockedByPolicy(() => withTandemSession(pool, agentUserA, (client) => client.query("update tandem.leads set partner_id = 'agent-pick' where id = $1", [leadA])))
+  );
+  const adminPartner = await withTandemSession(pool, userA, (client) => client.query("update tandem.leads set partner_id = 'partner-ci' where id = $1", [leadA2]));
+  check("an admin can record a lead's partner on the projection", adminPartner.rowCount === 1);
+
   await pool.end();
 
   if (failures > 0) {

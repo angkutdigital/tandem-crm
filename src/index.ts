@@ -1,4 +1,5 @@
 export * from "./domain.js";
+export * from "./commissions.js";
 export * from "./tandem.config.js";
 export * from "./auth.js";
 export * from "./authAdapter.js";

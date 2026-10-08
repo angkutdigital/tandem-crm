@@ -29,7 +29,7 @@ The intended host is a thin server-rendered admin and partner portal backed by P
 
 Inbound adapters may receive events from any CRM, payment, chat, or manual source. Terrain's own code has no Stripe, Tawk, or payout-provider dependency. A payout adapter must convert an approved commission to either a recorded manual payout or a verified external payout event; Terrain never assumes a bank transfer happened.
 
-Agents, territories, mappings, commission rules, and workspace settings are mutable configuration. Lead creation, assignment, conversion, payment, refund, and commission transitions are immutable business facts. Flexible lead attributes belong in the lead projection; only business-significant changes should become typed events. The current reducer models one commission hold per lead and full refunds before payout. Partial refunds, multiple payments, and post-payout clawbacks require additional event types before production use.
+Agents, territories, mappings, commission rules, and workspace settings are mutable configuration. Lead creation, assignment, conversion, payment, refund, and commission transitions are immutable business facts. Flexible lead attributes belong in the lead projection; only business-significant changes should become typed events. A lead can hold many payments, each with its own commission line, partial refunds and clawbacks. See "Lifetime commission" below.
 
 ## Quickstart: `npx tandem-crm init`
 
@@ -122,11 +122,58 @@ export type TandemPayoutAdapter = {
     partnerId: string;
     amountMinor: number;
     currency: string;
+    beneficiary?: "partner" | "house";
+    paymentId?: string;
   }): Promise<{ payoutReference: string }>;
 };
 ```
 
 A reference implementation against Stripe Connect lives outside the core package at `examples/dashboard/lib/stripePayoutAdapter.ts` (the core package itself has zero dependency on the `stripe` SDK, same reasoning as the auth adapter). A host calls `adapter.executePayout(...)` from their own approve/pay action, and only appends `commission.paid` with the returned reference once that call succeeds, if it throws, nothing is recorded and the payout stays `approved`, safely retryable. The reference dashboard's Payouts page demonstrates the full flow: an owner/admin approves an eligible payout (`commission.approved`), then pays it (`commission.paid`, via the configured adapter).
+
+## Lifetime commission
+
+A subscription customer pays every month, and the partner who referred them earns a commission on every payment. Each payment gets its own commission line, with its own 30-day hold, approval and payout.
+
+Record a payment from your payment webhook with `recordPayment`. It locks the lead, works out the rate from the customer's age, saves every decision in the event, and writes the payment and its line together. Sending the same payment id twice does nothing the second time.
+
+```ts
+import { withTandemSession, recordPayment } from "tandem-crm/db";
+import { defineTandemConfig } from "tandem-crm";
+
+const config = defineTandemConfig({
+  qualification: { automatedSetupMaxQualificationMetric: 15 },
+  commission: {
+    holdDays: 30,
+    // 25% in the customer's first year, 20% after.
+    rateSchedule: [{ fromMonth: 0, basisPoints: 2500 }, { fromMonth: 12, basisPoints: 2000 }],
+  },
+  partners: {
+    houseAccountId: "house",
+    onDeactivation: { futurePayments: "house", heldLines: "house" },
+  },
+});
+
+// Run as a workspace admin: the database refuses money events from anyone else.
+await withTandemSession(pool, adminUserId, (client) =>
+  recordPayment(client, {
+    workspaceId, leadId,
+    payment: { paymentId: invoice.id, amountMinor: invoice.amount_paid, currency: "MYR", confirmedAt },
+    config,
+    partnerStatus: async (partnerId) => ({ id: partnerId, active: await isActivePartner(partnerId) }),
+    source: "stripe",
+  })
+);
+```
+
+- **A lead needs a partner.** Commission is only worked out for a lead with a partner: `partnerId` on `lead.created`, or "Referred by partner" on Camp's New lead form. For a lead created without one, including every 0.1 lead (0.1 kept the partner on the commission), attach it later with `attributePartner` (admin-only, once per lead). A payment on a lead with no partner is still recorded, with a `commission.skipped` event saying why there is no line.
+- **Rates by customer age.** Age is whole calendar months from the customer's first payment, in UTC. A payment exactly on the anniversary gets the new rate. Amounts round half up, so half a cent or more goes to the partner.
+- **Partial refunds.** `recordRefund` reduces the payment's line in proportion. Pass the amount of that one refund (Stripe's `refund.amount`), not a running total such as a charge's `amount_refunded`. Before payout the line gets smaller (and is voided if it reaches zero). After payout the reduction becomes a clawback. Refunding the whole payment always reduces the line by exactly its amount.
+- **Clawbacks** are a running total per line, capped at what was paid. `commission.clawback_recovered` records what you got back, and `partnerBalance()` shows what is still owed.
+- **House account.** When you deactivate a partner in your own records, call `deactivatePartner`. Your config decides whether unpaid lines stay with the partner, move to the house account, or are voided, and whether later payments go to the partner, the house, or nowhere. Paid lines are never touched. Commit the partner change before you call it, so a payment arriving at the same moment sees the partner as inactive. After reactivation, moved lines stay with the house and forfeited payments stay forfeited. A house line is owed to your own business, so Camp shows it as "House" and will not pay it through the payout adapter.
+- **Releasing a line** is done only by the scheduled release job, `tandem.release_due_commissions()`, by the database's clock. The writer refuses `commission.eligible` from your app, and refuses any event stamped more than five minutes in the future.
+- **Annual prepay** is one payment and one line. Pass a longer `holdDays` if you want a longer refund window.
+
+All of this is written through `appendLeadEvents` in `tandem-crm/db`, the same writer Camp and the reference dashboard use. If you write your own events, use it too: it locks the lead, validates against the reducer, reads back the real sequence, and keeps the lead and payout rows in step with the log.
 
 ## Setup verification (`doctor.ts`)
 
@@ -169,10 +216,9 @@ Sales stage (`New` → `Contacted` → `Qualified` → `Negotiating` → `Closed
 ## Open items
 
 - The CI RLS check (`scripts/ci-rls-check.mjs`, runs on every push/PR) covers Terrain read/write boundaries, Ascent's template/progress/recertification boundary, Waypoint configuration, Belay dispute visibility/resolution, and Trail activity writes. It uses a disposable real Postgres database, not mocks.
-- No support for partial refunds or multiple payments per lead yet: single full payment / single full refund only. Deliberately deferred, the business rules aren't decided yet, not just unbuilt.
+- Monthly partner statements and a bank-transfer payout list are not built in. `partnerBalance()` gives the totals they would be built from.
 - Belay can execute an upheld dispute's outcome (see above), but has no scheduled auto-execution and no admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
-- The engine has no event writer of its own yet. Locking a lead, replaying its history and updating projections lives in `examples/dashboard/lib/actions.ts` and `packages/camp/src/actions.ts`. A documented `appendLeadEvent` in the package is planned.
 
 ## Local verification
 

@@ -50,6 +50,7 @@ mountTandemCamp({
 
 ```tsx
 // your-app/app/admin/[[...segments]]/page.tsx -- the one route Camp needs.
+import { Suspense } from "react";
 import "../../../tandem-camp.config"; // must run before CampRootPage renders
 import { CampRootPage } from "tandem-camp";
 
@@ -57,9 +58,18 @@ export default function Page(props: {
   params: Promise<{ segments?: string[] }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  return <CampRootPage {...props} basePath="/admin" />;
+  return (
+    <Suspense>
+      <CampRootPage {...props} basePath="/admin" />
+    </Suspense>
+  );
 }
 ```
+
+The `<Suspense>` wrapper matters on new Next.js apps, which turn on
+`cacheComponents` by default. Camp reads your database on every request, and
+without the wrapper `next build` stops with "uncached or runtime data during
+prerendering".
 
 That's the whole host wiring: one config module, one catch-all route. Camp
 routes internally by the `segments` array Next.js hands a

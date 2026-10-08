@@ -32,6 +32,11 @@ What it does not do:
 
 - Row-level security decides who may write a row. It does not prove that a projection row matches the event log it was built from. Keeping those in step is the writer's job (validate with the reducer, then write both in one transaction), and a writer that bypasses the reducer can still create a mismatch. Rebuilding a projection from events is the recovery path.
 - Money movement is enforced at the application layer as well as in Postgres: `tandem-camp` and the reference dashboard require an owner or admin to approve or pay a commission, and read the partner, amount and currency from the event log rather than from the request. If you write your own admin actions, do the same.
+- Since 0.2, `appendLeadEvents` in `tandem-crm/db` is the writer the package ships: it locks the lead, replays, reads back the real sequence and checks every row count. Its optional `actor` argument applies the agent rules in the app as well as in the database. A writer that skips it can still put the projection out of step with the log.
+- Payment webhooks (`recordPayment`, `recordRefund`) must run as a workspace owner or admin identity. A session with no user, or an agent, is refused by the database.
+- Only the release job releases a line. Since 0.2 the database refuses `commission.eligible` and the "tandem-engine" source from every authenticated session, admins included, and the writer refuses events stamped more than five minutes ahead. A host that runs its own SQL as the schema owner bypasses row level security and these rules with it.
+- `lead.partner_attributed` decides who earns commission on a lead's future payments. It is admin-only, allowed once, and refused when a line already names a different partner. Treat it as a money permission.
+- `commission.transferred` is admin-only and can move an unpaid line to any account id, labelled as the house account. Every transfer is kept in the event history with its reason. Treat the right to deactivate partners as a money permission.
 - The check runs against the schema this repository ships. If you add tables or grants of your own, they are outside it.
 
 ### Data handling

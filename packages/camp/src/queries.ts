@@ -204,6 +204,13 @@ export type PayoutSummary = {
   status: "held" | "eligible" | "approved" | "paid" | "voided";
   releaseAt: string;
   paidAt: string | null;
+  /** The customer payment this line was earned on (null on rows written
+   * before 0.2 by a host that inserted payouts itself). */
+  paymentId: string | null;
+  beneficiary: "partner" | "house";
+  originalPartnerId: string;
+  basisPoints: number | null;
+  clawbackOwedMinor: number;
 };
 
 export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
@@ -212,8 +219,11 @@ export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
     client.query<{
       id: string; lead_id: string; partner_id: string; company_name: string; amount_minor: string;
       currency: string; status: PayoutSummary["status"]; release_at: string; paid_at: string | null;
+      payment_id: string | null; beneficiary: "partner" | "house"; original_partner_id: string; basis_points: number | null;
+      clawback_amount_minor: string | null; clawback_recovered_minor: string;
     }>(
-      `select p.id, p.lead_id, p.partner_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at, p.paid_at
+      `select p.id, p.lead_id, p.partner_id, l.company_name, p.amount_minor, p.currency, p.status, p.release_at, p.paid_at,
+              p.payment_id, p.beneficiary, p.original_partner_id, p.basis_points, p.clawback_amount_minor, p.clawback_recovered_minor
        from tandem.payouts p
        join tandem.leads l on l.id = p.lead_id and l.workspace_id = p.workspace_id
        where p.workspace_id = $1
@@ -225,6 +235,9 @@ export async function getPayouts(userId: string): Promise<PayoutSummary[]> {
     id: row.id, leadId: row.lead_id, partnerId: row.partner_id, companyName: row.company_name,
     amountMinor: Number(row.amount_minor), currency: row.currency, status: row.status,
     releaseAt: toISO(row.release_at), paidAt: row.paid_at ? toISO(row.paid_at) : null,
+    paymentId: row.payment_id, beneficiary: row.beneficiary, originalPartnerId: row.original_partner_id,
+    basisPoints: row.basis_points === null ? null : Number(row.basis_points),
+    clawbackOwedMinor: Number(row.clawback_amount_minor ?? 0) - Number(row.clawback_recovered_minor),
   }));
 }
 
