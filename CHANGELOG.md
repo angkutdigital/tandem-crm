@@ -8,6 +8,33 @@ for the current state).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
+Lifetime commission. A subscription customer pays every month, and the partner who referred them now earns a commission on every payment. See `docs/design-0.2-lifetime-commission.md`.
+
+### Added
+
+- Many payments per lead, each with its own commission line, hold, approval and payout. `payment.confirmed` takes a `paymentId` so a retried webhook is harmless.
+- Rates by customer age (`commission.rateSchedule`), measured in whole calendar months from the first payment. Each line saves its rate and the customer's age.
+- Partial refunds (`payment.refunded` with `paymentId` and `amountMinor`). Unpaid lines shrink in proportion; paid lines get a clawback.
+- Clawbacks are a running total per line, capped at the paid amount. New `commission.clawback_recovered` records money recovered.
+- House account. `partners.onDeactivation` decides what happens to a deactivated partner's unpaid lines and future payments. New `commission.transferred` and `commission.forfeited` events.
+- Pure helpers: `planPaymentCommission`, `planPartnerDeactivation`, `partnerBalance`, `customerAgeMonths`, `rateForCustomerAge`.
+- A writer in `tandem-crm/db`: `appendLeadEvents`, `recordPayment`, `recordRefund`, `deactivatePartner`, plus `loadLeadState`. Camp and the reference dashboard now use it instead of their own copies.
+- Migration 022: commission-line columns on `tandem.payouts`, one line per payment enforced by a unique index, the new event types, and a release job that handles many lines per lead.
+- Camp's Payouts view shows each line's payment, rate, who it is owed to, and any clawback still owed.
+
+### Changed
+
+- `LeadState` has `payments` and `commissions` lists. The old `payment` and `commission` fields remain as the most recent of each, for compatibility.
+- A second `commission.clawback_requested` on the same line now adds to the first instead of being rejected.
+- `TandemPayoutAdapter.executePayout` also receives `beneficiary` and `paymentId`.
+
+### Compatibility
+
+- Every 0.1 history replays to the same state. This is tested against a frozen copy of the 0.1 reducer over 3,000 random histories.
+- Payout rows inserted the 0.1 way keep working: the referrer defaults to the row's partner.
+
 ## [0.1.0] - 2026-09-27
 
 ### Added
