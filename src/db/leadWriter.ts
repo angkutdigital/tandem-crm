@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { replayLeadEvents, type CommissionState, type LeadState, type TandemEvent } from "../domain.js";
+import { qualifyLead, replayLeadEvents, type CommissionState, type LeadState, type TandemEvent } from "../domain.js";
 import { planPartnerDeactivation, planPaymentCommission, type NewPayment, type PartnerStatus, type PaymentCommissionPlan } from "../commissions.js";
-import type { TandemConfig } from "../tandem.config.js";
+import { defaultTandemConfig, type TandemConfig } from "../tandem.config.js";
 
 /**
  * The one place Tandem appends lead events and keeps the lead and payout
@@ -331,6 +331,113 @@ export async function recordRefund(client: PoolClient, input: {
       occurredAt: input.occurredAt, source: input.source, sourceEventId: `refund:${input.refundId}`,
     }],
   });
+}
+
+export type CreateLeadResult = {
+  leadId: string;
+  state: LeadState;
+  /** False when this exact request was already recorded and nothing was written. */
+  created: boolean;
+};
+
+/**
+ * Creates a lead: the `lead.created` event and the lead's projection row,
+ * written together. It decides the qualification from the metric and your
+ * config, exactly as `qualifyLead` does, and saves that decision in the event.
+ *
+ * Owner or admin only, like the database policy on the lead table. Pass a
+ * stable `sourceEventId` (a form submission id, a webhook id) and a retry
+ * returns the lead that was already created instead of making a second one.
+ *
+ * To assign the lead to an agent afterwards, append `lead.assigned` with
+ * `appendLeadEvents`.
+ */
+export async function createLead(client: PoolClient, input: {
+  workspaceId: string;
+  /** Defaults to a new id. */
+  leadId?: string;
+  companyName: string;
+  contactPhone: string;
+  /** The number `qualifyLead` compares with your limit. Pass 0 to skip manual review. */
+  qualificationMetric: number;
+  productTag: string;
+  /** The partner who referred this customer. A lead earns commission only with one. */
+  partnerId?: string;
+  /** Free-form details kept on the lead, such as a contact name or address. */
+  attributes?: Record<string, unknown>;
+  config?: TandemConfig;
+  actor?: TandemActor;
+  source?: string;
+  sourceEventId?: string;
+  /** Defaults to now. */
+  occurredAt?: string;
+}): Promise<CreateLeadResult> {
+  const { workspaceId } = input;
+  if (input.actor && !isManager(input.actor)) throw new Error("only a workspace owner or admin can create a lead");
+  const companyName = input.companyName.trim();
+  const contactPhone = input.contactPhone.trim();
+  const productTag = input.productTag.trim();
+  if (!companyName) throw new Error("company name is required");
+  if (!contactPhone) throw new Error("contact phone is required");
+  if (!productTag) throw new Error("product tag is required");
+  const partnerId = input.partnerId?.trim() || undefined;
+  const source = (input.source ?? "app").trim().toLowerCase();
+  if (!source) throw new Error("source must not be empty");
+  if (source === RESERVED_SOURCE) throw new Error(`the "${RESERVED_SOURCE}" source is reserved for the scheduled release job`);
+  const occurredAt = input.occurredAt ?? new Date().toISOString();
+  const at = Date.parse(occurredAt);
+  if (!Number.isFinite(at)) throw new Error("occurredAt must be an ISO 8601 instant");
+  if (at > Date.now() + MAX_CLOCK_SKEW_MS) throw new Error("occurredAt is in the future; events record what has already happened");
+
+  const qualification = qualifyLead({ qualificationMetric: input.qualificationMetric }, input.config ?? defaultTandemConfig);
+  const data = {
+    companyName, qualificationMetric: input.qualificationMetric, qualification: qualification.status,
+    ...(partnerId ? { partnerId } : {}),
+  };
+  const sourceEventId = (input.sourceEventId ?? `${source}-${randomUUID()}`).trim();
+
+  const prior = await client.query<{ lead_id: string; event_type: string; payload: unknown }>(
+    "select lead_id, event_type, payload from tandem.events where workspace_id = $1 and source = $2 and source_event_id = $3",
+    [workspaceId, source, sourceEventId]
+  );
+  if (prior.rows.length > 0) {
+    const row = prior.rows[0];
+    if (row.event_type !== "lead.created" || canonical(row.payload) !== canonical(data)) {
+      throw new Error(`source event ${source}/${sourceEventId} was already recorded with different content`);
+    }
+    const state = await loadLeadState(client, workspaceId, row.lead_id);
+    if (!state) throw new Error("lead has no state");
+    return { leadId: row.lead_id, state, created: false };
+  }
+
+  const leadId = input.leadId ?? randomUUID();
+  const exists = await client.query("select 1 from tandem.leads where id = $1 and workspace_id = $2", [leadId, workspaceId]);
+  if (exists.rowCount !== 0) throw new Error("a lead with this id already exists");
+
+  const event = { id: randomUUID(), sequence: 1, workspaceId, leadId, source, sourceEventId, occurredAt, type: "lead.created", data } as TandemEvent;
+  const replayed = replayLeadEvents([event], workspaceId, leadId);
+  if (!replayed) throw new Error("lead has no state after creation");
+
+  const inserted = await client.query<{ sequence: string }>(
+    `insert into tandem.events
+       (id, workspace_id, entity_type, entity_id, lead_id, source, source_event_id, event_type, payload, occurred_at)
+     values ($1, $2, 'lead', $3, $3, $4, $5, $6, $7, $8)
+     returning sequence`,
+    [event.id, workspaceId, leadId, source, sourceEventId, event.type, JSON.stringify(data), occurredAt]
+  );
+  const lastSequence = Number(inserted.rows[0].sequence);
+  const state: LeadState = { ...replayed, lastSequence };
+
+  const projection = await client.query(
+    `insert into tandem.leads
+       (id, workspace_id, company_name, contact_phone, qualification_metric, product_tag, attributes,
+        pipeline_status, sales_stage, last_event_sequence, partner_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [leadId, workspaceId, companyName, contactPhone, input.qualificationMetric, productTag, JSON.stringify(input.attributes ?? {}),
+      state.status, state.salesStage, lastSequence, partnerId ?? null]
+  );
+  if (projection.rowCount !== 1) throw new Error("the lead projection was not written; this account may not create leads");
+  return { leadId, state, created: true };
 }
 
 /**

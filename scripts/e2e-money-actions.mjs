@@ -190,7 +190,7 @@ const eventCount = async (leadId, type) => Number((await pool.query("select coun
 // age, partial refunds, clawback recovery, the release job with many lines,
 // partner deactivation to the house account, and races.
 {
-  const { recordPayment, recordRefund, appendLeadEvents, deactivatePartner, withTandemSession } = await import(dist("dist/db/index.js"));
+  const { recordPayment, recordRefund, appendLeadEvents, deactivatePartner, createLead, withTandemSession } = await import(dist("dist/db/index.js"));
   await pool.query("create table if not exists public.e2e_partners (id text primary key, active boolean not null)");
   await pool.query("grant select on public.e2e_partners to authenticated");
   const setPartner = (id, active) => pool.query("insert into public.e2e_partners values ($1, $2) on conflict (id) do update set active = excluded.active", [id, active]);
@@ -433,6 +433,40 @@ const eventCount = async (leadId, type) => Number((await pool.query("select coun
     await rejects(() => asOwnerAppend(early, [{ type: "lead.stage_changed", data: { salesStage: "Negotiating" }, occurredAt: iso(1) }]), /future/));
   check("a timestamp within the clock-skew allowance is accepted",
     (await asOwnerAppend(early, [{ type: "lead.stage_changed", data: { salesStage: "Negotiating" }, occurredAt: new Date(Date.now() + 60_000).toISOString() }])).appended.length === 1);
+  // 8. createLead: the first event and the lead row, written together.
+  const mkLead = (extra = {}) => asOwner((client) => createLead(client, {
+    workspaceId, companyName: "Created Co", contactPhone: "+60 12-345 6789", qualificationMetric: 0, productTag: "starter",
+    partnerId: "life-partner", actor: { role: "owner" }, source: "form", ...extra,
+  }));
+  const made = await mkLead({ sourceEventId: "form-1", attributes: { contactName: "Aisha" } });
+  const madeRow = (await pool.query("select pipeline_status, partner_id, attributes, last_event_sequence from tandem.leads where id = $1", [made.leadId])).rows[0];
+  check("createLead writes the lead.created event and the lead row together",
+    made.created === true && (await eventCount(made.leadId, "lead.created")) === 1 && madeRow.partner_id === "life-partner" && madeRow.attributes.contactName === "Aisha");
+  check("the lead's sequence is the real database sequence and it replays to its projection",
+    Number(madeRow.last_event_sequence) === Number((await pool.query("select sequence from tandem.events where lead_id = $1", [made.leadId])).rows[0].sequence) && await projectionMatches(made.leadId));
+  const big = await mkLead({ sourceEventId: "form-big", qualificationMetric: 99, companyName: "Big Co" });
+  check("the qualification decision is saved: a small lead is automated, a large one needs review",
+    made.state.status === "Automated_Setup" && big.state.status === "Manual_Review" && (await leadStatus(big.leadId)) === "Manual_Review");
+  const retried = await mkLead({ sourceEventId: "form-1", attributes: { contactName: "Aisha" } });
+  check("a retried request returns the same lead and writes nothing new",
+    retried.created === false && retried.leadId === made.leadId && (await eventCount(made.leadId, "lead.created")) === 1);
+  check("the same request id with different content is refused",
+    await rejects(() => mkLead({ sourceEventId: "form-1", companyName: "Someone Else" }), /different content/));
+  await asOwnerAppend(made.leadId, [{ type: "conversion.confirmed", data: {} }]);
+  await payWith(config, made.leadId, "created_1", 10000, iso(-1));
+  check("a lead made with createLead earns commission on its first payment",
+    (await lines(made.leadId)).length === 1 && (await lines(made.leadId))[0].partner_id === "life-partner");
+  check("an agent is refused by the helper",
+    await rejects(() => withTandemSession(pool, agentUser, (client) => createLead(client, { workspaceId, companyName: "Agent Co", contactPhone: "1", qualificationMetric: 0, productTag: "x", actor: { role: "agent" } })), /owner or admin/));
+  check("an agent session is refused by the database even without the helper's check, and nothing is left behind",
+    await rejects(() => withTandemSession(pool, agentUser, (client) => createLead(client, { workspaceId, companyName: "Agent Attempt Co", contactPhone: "1", qualificationMetric: 0, productTag: "x", sourceEventId: "form-agent" })))
+    && Number((await pool.query("select count(*) from tandem.leads where company_name = 'Agent Attempt Co'")).rows[0].count) === 0
+    && Number((await pool.query("select count(*) from tandem.events where source_event_id = 'form-agent'")).rows[0].count) === 0);
+  check("the reserved release-job source is refused", await rejects(() => mkLead({ source: "tandem-engine" }), /reserved/));
+  check("a timestamp in the future is refused", await rejects(() => mkLead({ occurredAt: iso(1), sourceEventId: "form-future" }), /future/));
+  check("a lead id that already exists is refused", await rejects(() => mkLead({ leadId: made.leadId, sourceEventId: "form-dup" }), /already exists/));
+  check("an empty company name is refused", await rejects(() => mkLead({ companyName: "   ", sourceEventId: "form-empty" }), /company name/));
+
 }
 
 await pool.end();

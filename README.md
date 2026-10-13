@@ -41,6 +41,8 @@ npx tandem-crm init --database-url "$DATABASE_URL" --sample-data
 
 This applies every migration, grants the connecting role `authenticated` (see "One-time setup this requires" below for why that step exists), runs a health check (migrations recorded, `authenticated` role exists, the connecting role can assume it, RLS is actually enabled on every core table), and seeds a small demo workspace -- agents, leads spanning the pipeline, a held and a paid commission -- so there's something real to query immediately. Swap `--sample-data` for `--admin-user-id <uuid>` (an id from your own auth system; Tandem never creates auth users itself) to bootstrap an empty workspace instead. Run `npx tandem-crm init --help` for the full option list.
 
+To create a lead, mark it won and record a payment from your own code, see [Create a lead from your code](https://tandemcrm.dev/guides/first-lead-from-code/).
+
 Everything below this section is what `init` does for you, spelled out for anyone who wants to run the steps by hand or understand exactly what changed in their database.
 
 ## Database setup
