@@ -1,7 +1,7 @@
 {
   "name": "tandem-crm",
   "version": "0.2.1",
-  "description": "The engine half of Tandem, an embeddable, event-sourced CRM for Postgres: leads, agents, sales activity, commissions, and disputes. No servers, no vendor lock-in. The installable admin (tandem-camp) is a separate package -- see packages/camp.",
+  "description": "Partner commissions with holds, approvals, disputes and a replayable audit trail, in your own Postgres. An embeddable, event-sourced CRM engine for Node. MIT.",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -44,11 +44,18 @@
   },
   "keywords": [
     "postgres",
+    "postgresql",
+    "crm",
     "commission",
+    "commissions",
     "affiliate",
     "partner",
+    "referral",
+    "recurring-commission",
     "event-sourcing",
-    "embeddable"
+    "row-level-security",
+    "embeddable",
+    "typescript"
   ],
   "dependencies": {
     "pg": "^8.13.0"
@@ -57,5 +64,12 @@
     "@types/pg": "^8.11.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.4"
+  },
+  "homepage": "https://tandemcrm.dev",
+  "bugs": {
+    "url": "https://github.com/angkutdigital/tandem-crm/issues"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
