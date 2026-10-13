@@ -15,6 +15,13 @@ for the current state).
 - `createLead` in `tandem-crm/db`. It writes a lead's `lead.created` event and its row together, applies the qualification rule, saves that decision in the event, and records the referring partner if one is given. It is owner or admin only, like the database policy on the lead table. Pass a `sourceEventId` and a retry returns the lead that already exists instead of making a second one. Until now only Camp's New lead form could create a lead, so a host building its own interface had to insert the event and the row by hand.
 - A guide, "Create a lead from your code", that takes a lead from creation to a recorded payment in one script.
 
+### Changed
+
+- `tandem-crm init` now explains what to do when the connection is not allowed to grant itself the `authenticated` role, which is common on managed Postgres hosts. It stops with the one line an administrator needs to run, instead of a raw database error.
+- The README no longer claims production use. It says what is true: early, pre-1.0, and tested on every push.
+- CI now runs the security and money suites on Postgres 14, 15, 16 and 17, the unit tests on Node 20 and 22, and the whole set again with a limited, non-superuser admin account, which is how most managed hosts set you up.
+- `package.json` gained a homepage, a bug tracker, an `engines` range (Node 20 or later) and a current description.
+
 ## [0.2.0] - 2026-10-08
 
 Lifetime commission. A subscription customer pays every month, and the partner who referred them now earns a commission on every payment. See `docs/design-0.2-lifetime-commission.md`.

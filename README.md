@@ -13,7 +13,7 @@ You need a Postgres 14+ database before you start. Then:
 npx tandem-crm init --database-url "$DATABASE_URL" --sample-data
 ```
 
-**Status:** pre-1.0. It runs in production behind a real partner login and commission flow, and isolation between workspaces is tested against real Postgres on every push. Auth is vendor-neutral: implement `TandemAuthAdapter` for Supabase, Clerk, BetterAuth or your own sessions. See [CHANGELOG.md](./CHANGELOG.md) for what shipped and [SECURITY.md](./SECURITY.md) for what the tests do and do not cover.
+**Status:** early, pre-1.0 and not yet proven at scale. The test suites run against real Postgres 14 to 17, including with a non-superuser admin account, on every push, and two audit passes by a separate AI reviewer found and fixed real bugs in the money code before release. Auth is vendor-neutral: implement `TandemAuthAdapter` for Supabase, Clerk, BetterAuth or your own sessions. See [CHANGELOG.md](./CHANGELOG.md) for what shipped and [SECURITY.md](./SECURITY.md) for what the tests do and do not cover.
 
 ## Terrain: what the package does
 
@@ -93,7 +93,7 @@ List only the files that were actually applied. The runner then applies everythi
 
 ## Security and migration status
 
-The `tandem` schema is applied to production and exposed to PostgREST. Row-level security is active: workspace membership rows in `tandem.members` gate access, and the leads view is scoped by RLS (agents see their own leads, owners/admins see all). The schema's release function uses caller privileges and grants no public execution. A service-role key must stay server-side and cannot substitute for tested browser authorization.
+Row-level security is on for every Tandem table, which is what protects the data if you expose the `tandem` schema through PostgREST on Supabase. Workspace membership rows in `tandem.members` gate access, and the leads view is scoped by RLS (agents see their own leads, owners/admins see all). The schema's release function uses caller privileges and grants no public execution. A service-role key must stay server-side and cannot substitute for tested browser authorization.
 
 The migration set does **not** create Auth identities, webhook secrets, or a cron schedule. Those belong in a separately reviewed migration after the correct Supabase project and client credentials are verified. Limit retention/access for `raw_payload` because it can contain personal data. Do not expose the private schema to client code beyond the intended PostgREST surface.
 

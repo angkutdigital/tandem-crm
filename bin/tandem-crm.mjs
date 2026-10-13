@@ -85,7 +85,21 @@ async function main() {
 
     if (!args["skip-grant"]) {
       const { rows: [{ role }] } = await pool.query("select current_user as role");
-      await pool.query(`grant authenticated to "${role}"`);
+      try {
+        await pool.query(`grant authenticated to "${role}"`);
+      } catch (error) {
+        if (error.code === "42501") {
+          console.error(
+            `\nThe migrations were applied, but "${role}" is not allowed to grant itself the "authenticated" role, ` +
+            "so row-level security cannot apply to this connection yet.\n\n" +
+            "Ask whoever administers this database, or open its SQL console as an admin, and run:\n\n" +
+            `  grant authenticated to "${role}";\n\n` +
+            "Then run this command again. If an admin has already done this, add --skip-grant."
+          );
+          process.exit(1);
+        }
+        throw error;
+      }
       console.log(`Granted "authenticated" to "${role}".`);
     } else {
       console.log("Skipped granting \"authenticated\" (--skip-grant) -- do this yourself or RLS will silently block every query.");
