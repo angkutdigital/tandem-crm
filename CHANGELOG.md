@@ -19,7 +19,7 @@ for the current state).
 
 - `tandem-crm init` now explains what to do when the connection is not allowed to grant itself the `authenticated` role, which is common on managed Postgres hosts. It stops with the one line an administrator needs to run, instead of a raw database error.
 - The README no longer claims production use. It says what is true: early, pre-1.0, and tested on every push.
-- CI now runs the security and money suites on Postgres 14, 15, 16 and 17, the unit tests on Node 20 and 22, and the whole set again with a limited, non-superuser admin account, which is how most managed hosts set you up.
+- CI now runs the security and money suites on Postgres 14, 15, 16, 17 and 18, the unit tests on Node 20 and 22, and the whole set again with a limited, non-superuser admin account, which is how most managed hosts set you up.
 - `package.json` gained a homepage, a bug tracker, an `engines` range (Node 20 or later) and a current description.
 
 ## [0.2.0] - 2026-10-08

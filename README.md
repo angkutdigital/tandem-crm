@@ -13,7 +13,7 @@ You need a Postgres 14+ database before you start. Then:
 npx tandem-crm init --database-url "$DATABASE_URL" --sample-data
 ```
 
-**Status:** early, pre-1.0 and not yet proven at scale. The test suites run against real Postgres 14 to 17, including with a non-superuser admin account, on every push, and two audit passes by a separate AI reviewer found and fixed real bugs in the money code before release. Auth is vendor-neutral: implement `TandemAuthAdapter` for Supabase, Clerk, BetterAuth or your own sessions. See [CHANGELOG.md](./CHANGELOG.md) for what shipped and [SECURITY.md](./SECURITY.md) for what the tests do and do not cover.
+**Status:** early, pre-1.0 and not yet proven at scale. The test suites run against real Postgres 14 to 18, including with a non-superuser admin account, on every push, and two audit passes by a separate AI reviewer found and fixed real bugs in the money code before release. Auth is vendor-neutral: implement `TandemAuthAdapter` for Supabase, Clerk, BetterAuth or your own sessions. See [CHANGELOG.md](./CHANGELOG.md) for what shipped and [SECURITY.md](./SECURITY.md) for what the tests do and do not cover.
 
 ## Terrain: what the package does
 
