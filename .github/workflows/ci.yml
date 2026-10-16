@@ -7,24 +7,35 @@ on:
     branches: [main]
 
 jobs:
+  # Unit tests, typecheck and build on the two Node versions the package
+  # claims to support ("engines": node >= 20).
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
 
+  # Row-level security isolation, on every Postgres version we say we support.
   rls:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [14, 15, 16, 17, 18]
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tandem_ci
@@ -47,11 +58,16 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/tandem_ci
 
+  # The money actions, with real concurrency, on every supported Postgres.
   e2e:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [14, 15, 16, 17, 18]
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tandem_e2e
@@ -74,3 +90,52 @@ jobs:
       - run: node scripts/e2e-money-actions.mjs
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/tandem_e2e
+
+  # Most managed Postgres hosts give you an admin account that can create
+  # roles but is not a superuser. Run `init` and both suites as exactly that
+  # kind of account, so a passing run means Tandem does not depend on
+  # superuser powers.
+  limited-admin:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build --prefix packages/camp
+      - name: Create a limited admin account and three empty databases it owns
+        run: |
+          psql -c "create role app_admin login createrole createdb nosuperuser password 'app_admin'"
+          for db in limited_init limited_rls limited_e2e; do
+            psql -c "create database $db owner app_admin"
+          done
+      - name: init and health check as the limited admin
+        run: node bin/tandem-crm.mjs init --database-url postgres://app_admin:app_admin@localhost:5432/limited_init --sample-data
+      - name: Row-level security suite as the limited admin
+        run: node scripts/ci-rls-check.mjs
+        env:
+          DATABASE_URL: postgres://app_admin:app_admin@localhost:5432/limited_rls
+      - name: Money actions suite as the limited admin
+        run: node scripts/e2e-money-actions.mjs
+        env:
+          DATABASE_URL: postgres://app_admin:app_admin@localhost:5432/limited_e2e
