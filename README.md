@@ -68,6 +68,8 @@ const leads = await withTandemSession(pool, currentUserId, (client) =>
 );
 ```
 
+Some hosts, including Aiven, DigitalOcean and Amazon RDS, sign their connections with their own certificate authority, and Node refuses those by default (`SELF_SIGNED_CERT_IN_CHAIN`). Download the host's CA certificate and add `?sslmode=verify-full&sslrootcert=/path/to/ca.pem` to your connection string. See [Database, migrations and RLS](https://tandemcrm.dev/guides/database-migrations-and-rls/).
+
 **One-time setup this requires:** `withTandemSession` assumes the `authenticated` role for the duration of the transaction, unconditionally. This matters because RLS is bypassed entirely for a table's owner and for a superuser, and the role a hosted Postgres (Neon, RDS, a fresh Supabase project) hands you by default is almost always exactly the role that owns everything it creates. Grant the role your connection string actually uses membership in `authenticated` once:
 
 ```sql

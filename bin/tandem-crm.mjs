@@ -10,6 +10,9 @@ import { createTandemPool, applyTandemMigrations } from "../dist/db/index.js";
 import { runHealthCheck } from "./lib/healthCheck.mjs";
 import { seedSampleWorkspace, SAMPLE_OWNER_USER_ID } from "./lib/sampleData.mjs";
 
+/** Node errors that mean the host signs its connections with its own certificate authority. */
+const CERTIFICATE_ERRORS = new Set(["SELF_SIGNED_CERT_IN_CHAIN", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "CERT_UNTRUSTED"]);
+
 function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -80,7 +83,24 @@ async function main() {
   const pool = createTandemPool(databaseUrl);
   try {
     console.log("Applying migrations...");
-    const { applied } = await applyTandemMigrations(pool);
+    let applied;
+    try {
+      ({ applied } = await applyTandemMigrations(pool));
+    } catch (error) {
+      if (CERTIFICATE_ERRORS.has(error.code)) {
+        console.error(
+          `\nCould not verify the database's security certificate (${error.code}).\n\n` +
+          "Some hosts, including Aiven, DigitalOcean and Amazon RDS, secure the connection with their own " +
+          "certificate authority, which Node does not trust by default.\n\n" +
+          "Download your host's CA certificate from its dashboard, then add two parameters to your connection string:\n\n" +
+          "  ...?sslmode=verify-full&sslrootcert=/path/to/ca.pem\n\n" +
+          "For a throwaway test database only, you can use ?sslmode=no-verify instead. " +
+          "That switches certificate checking off, so do not use it with real data."
+        );
+        process.exit(1);
+      }
+      throw error;
+    }
     console.log(applied.length > 0 ? `  applied ${applied.length}: ${applied.join(", ")}` : "  already up to date");
 
     if (!args["skip-grant"]) {
