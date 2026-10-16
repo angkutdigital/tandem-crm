@@ -1,0 +1,55 @@
+name: Bug report
+description: Something does not work the way the docs or the code say it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. If it is a security problem, please do not use this form. See [SECURITY.md](https://github.com/angkutdigital/tandem-crm/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: The smallest script or set of steps that shows the problem. A short code snippet is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tandem version
+      description: The output of `npm ls tandem-crm`, for example 0.2.1.
+    validations:
+      required: true
+  - type: input
+    id: postgres
+    attributes:
+      label: Postgres version and host
+      description: For example "Postgres 17 on Neon, pooled connection" or "Postgres 16 in Docker".
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: The output of `node --version`.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: Any error message or stack trace. Please remove passwords and connection strings first.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed any passwords, tokens and connection strings from this report.
+          required: true

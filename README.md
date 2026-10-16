@@ -224,6 +224,10 @@ Sales stage (`New` → `Contacted` → `Qualified` → `Negotiating` → `Closed
 - Belay can execute an upheld dispute's outcome (see above), but has no scheduled auto-execution and no admin-initiated holds unrelated to a partner dispute (fraud/compliance review).
 - The routing decision (`selectAgentForLead`) is a pure function; nothing yet wires it to a real webhook handler that queries eligible agents and appends the resulting event.
 
+## Contributing
+
+Tandem is MIT licensed and contributions are welcome: bug reports, docs fixes, a report of how it ran on your Postgres host, and code. Start with [CONTRIBUTING.md](./CONTRIBUTING.md), and please follow the [Code of Conduct](./CODE_OF_CONDUCT.md). If you would rather take it your own way, fork it. You can read about who we are and why we built it at [tandemcrm.dev/about](https://tandemcrm.dev/about/).
+
 ## Local verification
 
 From the repository root:

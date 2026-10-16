@@ -1,0 +1,76 @@
+name: Postgres host report
+description: Tell us how Tandem worked, or did not, on your Postgres host
+title: "Host report: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Our "Tested on" list only covers hosts we have run ourselves. A report from your host helps everyone, whether it worked, failed, or needed an extra setting.
+
+        The quickest check is `npx tandem-crm init --database-url "$DATABASE_URL"`. Use a throwaway database.
+  - type: input
+    id: host
+    attributes:
+      label: Host or provider
+      description: For example Amazon RDS, DigitalOcean, Render, Railway, Fly, self-hosted.
+    validations:
+      required: true
+  - type: input
+    id: postgres
+    attributes:
+      label: Postgres version
+      description: The output of `select version();`.
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - Direct connection
+        - Pooled, transaction mode
+        - Pooled, session mode
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: admin
+    attributes:
+      label: The database account you connected with
+      options:
+        - Superuser
+        - Can create roles, not a superuser
+        - Neither
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: How far did you get?
+      options:
+        - init passed
+        - init passed and I ran the security and money test suites, which passed
+        - init failed
+        - init passed but something else failed
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The output of `init`, or any error. Please remove passwords and connection strings first.
+      render: shell
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Extra settings you needed, such as a CA certificate, and anything that surprised you.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed any passwords, tokens and connection strings from this report.
+          required: true
