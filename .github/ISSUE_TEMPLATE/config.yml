@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/angkutdigital/tandem-crm/blob/main/SECURITY.md
+    about: Please do not open a public issue for a vulnerability. Follow the private reporting steps.
+  - name: Read the docs
+    url: https://tandemcrm.dev/guides/getting-started/
+    about: The guides cover setup, the event log, commissions, Camp and more.

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately to **security@angkutdigital.com**.
+Report vulnerabilities privately to **hello@angkut.co**. Put "Tandem security" in the subject line so we see it first.
 
 Please include:
 
