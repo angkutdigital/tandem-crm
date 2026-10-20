@@ -15,6 +15,18 @@ npx tandem-crm init --database-url "$DATABASE_URL" --sample-data
 
 **Status:** early, pre-1.0 and not yet proven at scale. The test suites run against real Postgres 14 to 18, including with a non-superuser admin account, on every push, and two audit passes by a separate AI reviewer found and fixed real bugs in the money code before release. Auth is vendor-neutral: implement `TandemAuthAdapter` for Supabase, Clerk, BetterAuth or your own sessions. See [CHANGELOG.md](./CHANGELOG.md) for what shipped and [SECURITY.md](./SECURITY.md) for what the tests do and do not cover.
 
+## What Camp looks like
+
+These are screenshots of the reference dashboard in `examples/dashboard`, running on the sample data that `init --sample-data` creates. Camp mounts into your own Next.js app.
+
+![Camp overview: pipeline by status, agents and onboarding progress](./docs/img/camp-overview.webp)
+
+Every lead keeps its full event history, in the order it was written. Commission and payout state are rebuilt from those events, so you can replay any lead and see why a payout is what it is.
+
+![A lead's event history in Camp](./docs/img/camp-lead.webp)
+
+![Payouts in Camp, with a held and a paid payout](./docs/img/camp-payouts.webp)
+
 ## Terrain: what the package does
 
 - `domain.ts` qualifies a lead against installation config, defines typed business events, replays one lead from database append order, calculates an exact integer commission, and evaluates the escrow release instant.
