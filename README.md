@@ -1,8 +1,10 @@
 # Tandem CRM
 
-Partner commissions with holds, approvals, disputes and a replayable audit trail, stored in your own Postgres. It is a library you install into your app, not a service that takes a cut.
+A CRM and partner-commission engine you embed in your own app. Leads, sales activity, agents and lifetime partner commissions, with holds, approvals, disputes and clawbacks, live in your own Postgres behind your own login. It is a library you install, not a service: no separate server, worker or second login, and no cut taken.
 
-Under the commission ledger is a small CRM: leads, agents, sales activity and lead routing. Everything is recorded as typed, append-only events, and current state is rebuilt from them. Row-level security keeps each workspace's data separate in the database itself.
+Everything is recorded as typed, append-only events, and current state is rebuilt from them. Row-level security keeps each workspace's data separate in the database itself.
+
+Tandem is not a replacement for a hosted CRM such as HubSpot or Twenty. It has no email sync, imports or long list of integrations yet. It is for developers building a product where partners, agents or resellers are part of the business.
 
 - **`tandem-crm`** is the engine. Five modules (Terrain, Ascent, Waypoint, Belay, Trail), one runtime dependency (`pg`), no UI.
 - **`tandem-camp`** is an optional admin UI that mounts into your own Next.js app. It has every screen: Overview, Leads (list, board and detail), Agents, Payouts, Earnings, Disputes and Settings. See [packages/camp/README.md](./packages/camp/README.md).
